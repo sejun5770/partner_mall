@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Pagination from "@/components/Pagination";
+import type { Category } from "@/lib/category";
+import { CATEGORY_LABEL } from "@/lib/category";
 
 interface Settlement {
   order_seq: number;
@@ -16,10 +18,17 @@ interface Settlement {
   planner_name: string | null;
   card_code: string;
   card_brand: string;
+  card_div: string | null;
+  category: Category;
   item_amount: number;
   payment_amount: number;
   commission_rate: number;
   commission_amount: number;
+}
+
+interface CategoryStat {
+  orders: number;
+  sales: number;
 }
 
 interface SettlementSummary {
@@ -27,6 +36,11 @@ interface SettlementSummary {
   total_sales: number;
   total_pg_amount: number | null;
   total_commission_paid: number;
+  by_category?: {
+    invitation: CategoryStat;
+    thankyou: CategoryStat;
+    goods: CategoryStat;
+  };
 }
 
 interface SettlementResponse {
@@ -44,12 +58,19 @@ interface PartnerOption {
 }
 
 type FilterMode = "month" | "range";
+type CategoryTab = "all" | Category;
 
 const DASH = "-";
 
 function fmtMonth(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
+
+const CATEGORY_BADGE_CLASS: Record<Category, string> = {
+  invitation: "bg-indigo-100 text-indigo-800",
+  thankyou: "bg-emerald-100 text-emerald-800",
+  goods: "bg-amber-100 text-amber-800",
+};
 
 export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
   const [settlements, setSettlements] = useState<Settlement[]>([]);
@@ -63,6 +84,8 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
   const [month, setMonth] = useState(() => fmtMonth(new Date()));
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+
+  const [categoryTab, setCategoryTab] = useState<CategoryTab>("all");
 
   const [partners, setPartners] = useState<PartnerOption[]>([]);
   const [selectedPartnerId, setSelectedPartnerId] = useState<string>("");
@@ -90,6 +113,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
     }
     if (isAdmin && selectedPartnerId) params.set("partnerShopId", selectedPartnerId);
     if (isAdmin && partnerNameSearch) params.set("partnerName", partnerNameSearch);
+    if (categoryTab !== "all") params.set("category", categoryTab);
 
     try {
       const res = await fetch(`/api/settlement?${params}`);
@@ -104,7 +128,18 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
       setTotal(0);
     }
     setLoading(false);
-  }, [page, pageSize, filterMode, month, dateFrom, dateTo, isAdmin, selectedPartnerId, partnerNameSearch]);
+  }, [
+    page,
+    pageSize,
+    filterMode,
+    month,
+    dateFrom,
+    dateTo,
+    isAdmin,
+    selectedPartnerId,
+    partnerNameSearch,
+    categoryTab,
+  ]);
 
   useEffect(() => {
     fetchSettlements();
@@ -123,6 +158,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
     setDateTo("");
     setSelectedPartnerId("");
     setPartnerNameSearch("");
+    setCategoryTab("all");
     setPage(1);
   };
 
@@ -142,8 +178,17 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
 
   const totalPages = Math.ceil(total / pageSize);
   const showPartnerCols = isAdmin && !selectedPartnerId;
-  // columns: NO, [아이디, 제휴사명], 주문번호, 주문상태, 주문일, 결제일, 배송일, 주문자, 신랑신부, 예식장, 플래너명, 주문카드, 브랜드, 소비자가격, 공급가액, 결제금액, 수수료
-  const colCount = (showPartnerCols ? 2 : 0) + 15;
+  // columns: NO, [아이디, 제휴사명], 주문번호, 카테고리, 주문상태, 주문일, 결제일, 배송일,
+  //          주문자, 신랑신부, 예식장, 플래너명, 주문카드, 브랜드, 소비자가격, 공급가액, 결제금액, 수수료
+  const colCount = (showPartnerCols ? 2 : 0) + 16;
+
+  const byCat = summary?.by_category;
+  const tabs: { key: CategoryTab; label: string; count?: number }[] = [
+    { key: "all", label: "전체", count: summary?.total_orders },
+    { key: "invitation", label: CATEGORY_LABEL.invitation, count: byCat?.invitation.orders },
+    { key: "thankyou", label: CATEGORY_LABEL.thankyou, count: byCat?.thankyou.orders },
+    { key: "goods", label: CATEGORY_LABEL.goods, count: byCat?.goods.orders },
+  ];
 
   return (
     <div className="space-y-6">
@@ -151,33 +196,31 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <form onSubmit={handleSearch} className="space-y-4">
           {isAdmin && (
-            <>
-              <div className="flex items-center gap-3">
-                <label className="w-24 text-sm font-medium text-slate-700">제휴사</label>
-                <select
-                  value={selectedPartnerId}
-                  onChange={(e) => {
-                    setSelectedPartnerId(e.target.value);
-                    setPage(1);
-                  }}
-                  className="h-9 min-w-64 rounded border border-slate-300 bg-white px-2 text-sm"
-                >
-                  <option value="">전체</option>
-                  {partners.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.partner_name} ({p.login_id})
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="text"
-                  value={partnerNameSearch}
-                  onChange={(e) => setPartnerNameSearch(e.target.value)}
-                  placeholder="제휴사명 검색 (부분일치)"
-                  className="h-9 w-64 rounded border border-slate-300 bg-white px-2 text-sm"
-                />
-              </div>
-            </>
+            <div className="flex items-center gap-3">
+              <label className="w-24 text-sm font-medium text-slate-700">제휴사</label>
+              <select
+                value={selectedPartnerId}
+                onChange={(e) => {
+                  setSelectedPartnerId(e.target.value);
+                  setPage(1);
+                }}
+                className="h-9 min-w-64 rounded border border-slate-300 bg-white px-2 text-sm"
+              >
+                <option value="">전체</option>
+                {partners.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.partner_name} ({p.login_id})
+                  </option>
+                ))}
+              </select>
+              <input
+                type="text"
+                value={partnerNameSearch}
+                onChange={(e) => setPartnerNameSearch(e.target.value)}
+                placeholder="제휴사명 검색 (부분일치)"
+                className="h-9 w-64 rounded border border-slate-300 bg-white px-2 text-sm"
+              />
+            </div>
           )}
 
           <div className="flex items-center gap-3">
@@ -268,7 +311,32 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
         </form>
       </section>
 
-      {/* Summary */}
+      {/* Per-category summary (always derived from the unfiltered-by-category summary
+          so users see the breakdown even when a single category tab is active). */}
+      {summary && byCat && (
+        <section className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <CategoryCard
+            label="청첩장"
+            orders={byCat.invitation.orders}
+            sales={byCat.invitation.sales}
+            tone="invitation"
+          />
+          <CategoryCard
+            label="답례품"
+            orders={byCat.thankyou.orders}
+            sales={byCat.thankyou.sales}
+            tone="thankyou"
+          />
+          <CategoryCard
+            label="기념굿즈(데코소품)"
+            orders={byCat.goods.orders}
+            sales={byCat.goods.sales}
+            tone="goods"
+          />
+        </section>
+      )}
+
+      {/* Totals */}
       {summary && (
         <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <SummaryCard label="총 주문건수" value={`${summary.total_orders.toLocaleString()} 건`} />
@@ -287,6 +355,36 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
 
       {/* List */}
       <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+        {/* Category tabs */}
+        <div role="tablist" className="flex gap-1 border-b border-slate-200 px-3 pt-3">
+          {tabs.map((t) => {
+            const active = categoryTab === t.key;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => {
+                  setCategoryTab(t.key);
+                  setPage(1);
+                }}
+                className={
+                  "-mb-px rounded-t border border-b-0 px-4 py-2 text-sm font-medium " +
+                  (active
+                    ? "border-slate-200 bg-white text-indigo-700"
+                    : "border-transparent text-slate-500 hover:text-slate-800")
+                }
+              >
+                {t.label}
+                {typeof t.count === "number" && (
+                  <span className="ml-1.5 text-xs text-slate-400">{t.count.toLocaleString()}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
           <span className="text-sm text-slate-600">
             총 <strong className="text-slate-900">{total.toLocaleString()}</strong>건
@@ -316,6 +414,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                 {showPartnerCols && <Th>아이디</Th>}
                 {showPartnerCols && <Th>제휴사명</Th>}
                 <Th>주문번호</Th>
+                <Th>분류</Th>
                 <Th>주문상태</Th>
                 <Th>주문일</Th>
                 <Th>결제일</Th>
@@ -356,6 +455,13 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                       {showPartnerCols && <Td>{s.login_id}</Td>}
                       {showPartnerCols && <Td>{s.company_name}</Td>}
                       <Td>{s.order_seq}</Td>
+                      <Td>
+                        <span
+                          className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${CATEGORY_BADGE_CLASS[s.category]}`}
+                        >
+                          {CATEGORY_LABEL[s.category]}
+                        </span>
+                      </Td>
                       <Td>
                         <span className="inline-block rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-medium text-indigo-800">
                           발송완료
@@ -405,6 +511,36 @@ function SummaryCard({
     <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       <div className="text-xs font-medium text-slate-500">{label}</div>
       <div className={`mt-1 text-xl font-bold ${valueColor}`}>{value}</div>
+    </div>
+  );
+}
+
+function CategoryCard({
+  label,
+  orders,
+  sales,
+  tone,
+}: {
+  label: string;
+  orders: number;
+  sales: number;
+  tone: Category;
+}) {
+  const accent: Record<Category, string> = {
+    invitation: "border-l-indigo-500",
+    thankyou: "border-l-emerald-500",
+    goods: "border-l-amber-500",
+  };
+  return (
+    <div
+      className={`rounded-lg border border-slate-200 border-l-4 bg-white p-4 shadow-sm ${accent[tone]}`}
+    >
+      <div className="text-xs font-medium text-slate-500">{label}</div>
+      <div className="mt-1 flex items-baseline gap-2">
+        <span className="text-xl font-bold text-slate-900">{orders.toLocaleString()}</span>
+        <span className="text-xs text-slate-500">건</span>
+      </div>
+      <div className="mt-0.5 text-sm text-slate-600">{sales.toLocaleString()} 원</div>
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { getMssqlPool } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { brandName } from "@/lib/brand";
 import { getCommissionRate, calcCommission } from "@/lib/commission";
+import { categoryCaseSql, Category } from "@/lib/category";
 
 /**
  * GET /api/settlement
@@ -15,17 +16,16 @@ import { getCommissionRate, calcCommission } from "@/lib/commission";
  *   - Excludes s2_barunsoncard (바른손카드 자체 주문; internal, not a partner).
  *   - Date filtering is on src_send_date (settlement month = shipment month).
  *   - 결제일/배송일 columns both display src_send_date per business spec.
+ *   - Category is derived from the first item's S2_Card.Card_Div:
+ *       A01 → invitation (청첩장), A03 → thankyou (답례품), else → goods (기념굿즈).
  *
  * Query params:
  *   - page, pageSize
  *   - month=YYYY-MM  (takes precedence over dateFrom/dateTo)
  *   - dateFrom=YYYY-MM-DD, dateTo=YYYY-MM-DD
+ *   - category=invitation|thankyou|goods
  *   - partnerShopId   admin-only; filters to one COMPANY_SEQ
  *   - partnerName     admin-only; LIKE partial match on COMPANY_NAME
- *
- * Authorization:
- *   - Non-admin: company_seq forced to user.partnerShopId.
- *   - Admin: optional company_seq / partnerName filters.
  */
 export async function GET(request: NextRequest) {
   const user = await getCurrentUser();
@@ -36,9 +36,15 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const page = Math.max(1, parseInt(searchParams.get("page") || "1"));
   const pageSize = Math.min(200, Math.max(1, parseInt(searchParams.get("pageSize") || "20")));
-  const month = searchParams.get("month"); // YYYY-MM
+  const month = searchParams.get("month");
   const dateFrom = searchParams.get("dateFrom");
   const dateTo = searchParams.get("dateTo");
+
+  const rawCategory = searchParams.get("category");
+  const category: Category | null =
+    rawCategory === "invitation" || rawCategory === "thankyou" || rawCategory === "goods"
+      ? rawCategory
+      : null;
 
   let filterCompanySeq: number | null;
   let partnerNameLike: string | null = null;
@@ -85,8 +91,25 @@ export async function GET(request: NextRequest) {
       .input("endDateExcl", sql.Date, endDateExcl)
       .input("companySeq", sql.Int, filterCompanySeq)
       .input("partnerNameLike", sql.NVarChar, partnerNameLike)
+      .input("category", sql.VarChar, category)
       .input("offset", sql.Int, (page - 1) * pageSize)
       .input("pageSize", sql.Int, pageSize);
+
+    // The derived category for an order comes from the first item's Card_Div.
+    // Expose it once via OUTER APPLY and reuse for filter + display + summary.
+    const categoryExpr = categoryCaseSql("fi.Card_Div");
+
+    const baseFrom = `
+      FROM custom_order o
+      JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
+      OUTER APPLY (
+        SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div
+        FROM custom_order_item oi
+        JOIN S2_Card sc ON oi.card_seq = sc.Card_Seq
+        WHERE oi.order_seq = o.order_seq
+        ORDER BY oi.id ASC
+      ) fi
+    `;
 
     // Shared WHERE clause: 발송완료 + exclude internal partner + optional filters
     const whereClause = `
@@ -96,35 +119,38 @@ export async function GET(request: NextRequest) {
         AND c.LOGIN_ID <> 's2_barunsoncard'
         AND (@companySeq IS NULL OR o.company_seq = @companySeq)
         AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
+        AND (@category IS NULL OR ${categoryExpr} = @category)
     `;
 
-    // Summary
-    // total_sales uses last_total_price — the final per-order total that already
-    // rolls up surcharges (same-day shipping 오늘출발, binding 제본, envelopes, etc.)
-    // and discounts (coupons, reduce_price) per the business spec.
+    // Summary (overall + per-category breakdown)
     const summaryResult = await req.query<{
       total_orders: number;
       total_sales: number | null;
+      invitation_orders: number;
+      invitation_sales: number | null;
+      thankyou_orders: number;
+      thankyou_sales: number | null;
+      goods_orders: number;
+      goods_sales: number | null;
     }>(`
       SELECT
         COUNT(*) AS total_orders,
-        COALESCE(SUM(o.last_total_price), 0) AS total_sales
-      FROM custom_order o
-      JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
+        COALESCE(SUM(o.last_total_price), 0) AS total_sales,
+        SUM(CASE WHEN ${categoryExpr} = 'invitation' THEN 1 ELSE 0 END) AS invitation_orders,
+        COALESCE(SUM(CASE WHEN ${categoryExpr} = 'invitation' THEN o.last_total_price ELSE 0 END), 0) AS invitation_sales,
+        SUM(CASE WHEN ${categoryExpr} = 'thankyou' THEN 1 ELSE 0 END) AS thankyou_orders,
+        COALESCE(SUM(CASE WHEN ${categoryExpr} = 'thankyou' THEN o.last_total_price ELSE 0 END), 0) AS thankyou_sales,
+        SUM(CASE WHEN ${categoryExpr} = 'goods' THEN 1 ELSE 0 END) AS goods_orders,
+        COALESCE(SUM(CASE WHEN ${categoryExpr} = 'goods' THEN o.last_total_price ELSE 0 END), 0) AS goods_sales
+      ${baseFrom}
       ${whereClause}
     `);
 
-    const summaryRow = summaryResult.recordset[0] ?? { total_orders: 0, total_sales: 0 };
-    const totalOrders = summaryRow.total_orders ?? 0;
-    const totalSales = Number(summaryRow.total_sales ?? 0);
+    const s = summaryResult.recordset[0];
+    const totalOrders = Number(s?.total_orders ?? 0);
+    const totalSales = Number(s?.total_sales ?? 0);
 
     // List
-    // - groom_fname / bride_fname come from custom_order_WeddInfo (given name only,
-    //   without surname — this is the name actually printed on the wedding invitation).
-    // - wedd_name is the venue name (예식장).
-    // - payment_amount uses last_total_price per business spec (includes same-day shipping
-    //   fees 오늘출발, binding fees 제본, coupon discounts, etc.).
-    // - planner name: column not yet identified in bar_shop1; left as NULL (shown as '-').
     const listResult = await req.query<{
       order_seq: number;
       company_seq: number;
@@ -138,6 +164,8 @@ export async function GET(request: NextRequest) {
       wedd_name: string | null;
       card_code: string | null;
       card_brand: string | null;
+      card_div: string | null;
+      category: Category;
       item_amount: number | null;
       payment_amount: number | null;
     }>(`
@@ -152,18 +180,15 @@ export async function GET(request: NextRequest) {
         w.groom_fname,
         w.bride_fname,
         w.wedd_name,
-        (SELECT TOP 1 sc.Card_Code  FROM custom_order_item oi
-           JOIN S2_Card sc ON oi.card_seq = sc.Card_Seq
-           WHERE oi.order_seq = o.order_seq) AS card_code,
-        (SELECT TOP 1 sc.CardBrand  FROM custom_order_item oi
-           JOIN S2_Card sc ON oi.card_seq = sc.Card_Seq
-           WHERE oi.order_seq = o.order_seq) AS card_brand,
+        fi.Card_Code      AS card_code,
+        fi.CardBrand      AS card_brand,
+        fi.Card_Div       AS card_div,
+        ${categoryExpr}   AS category,
         (SELECT SUM(oi.item_sale_price * oi.item_count)
            FROM custom_order_item oi
            WHERE oi.order_seq = o.order_seq) AS item_amount,
         o.last_total_price AS payment_amount
-      FROM custom_order o
-      JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
+      ${baseFrom}
       OUTER APPLY (
         SELECT TOP 1 wi.groom_fname, wi.bride_fname, wi.wedd_name
         FROM custom_order_WeddInfo wi
@@ -179,10 +204,9 @@ export async function GET(request: NextRequest) {
       const itemAmount = Number(r.item_amount ?? 0);
       const paymentAmount = Number(r.payment_amount ?? 0);
       const ratePct = getCommissionRate(r.company_seq);
-      // Commission is charged on the actual payment amount (post all surcharges & discounts).
       const commission = calcCommission(paymentAmount, ratePct);
       const couple = [r.groom_fname, r.bride_fname]
-        .map((s) => (s ?? "").trim())
+        .map((x) => (x ?? "").trim())
         .filter(Boolean)
         .join(",");
       return {
@@ -198,6 +222,8 @@ export async function GET(request: NextRequest) {
         planner_name: null, // TODO: column not yet identified in bar_shop1
         card_code: r.card_code ?? "-",
         card_brand: brandName(r.card_brand),
+        card_div: r.card_div ?? null,
+        category: r.category,
         item_amount: itemAmount,
         payment_amount: paymentAmount,
         commission_rate: ratePct,
@@ -212,12 +238,27 @@ export async function GET(request: NextRequest) {
         total_sales: totalSales,
         total_pg_amount: null,
         total_commission_paid: 0,
+        by_category: {
+          invitation: {
+            orders: Number(s?.invitation_orders ?? 0),
+            sales: Number(s?.invitation_sales ?? 0),
+          },
+          thankyou: {
+            orders: Number(s?.thankyou_orders ?? 0),
+            sales: Number(s?.thankyou_sales ?? 0),
+          },
+          goods: {
+            orders: Number(s?.goods_orders ?? 0),
+            sales: Number(s?.goods_sales ?? 0),
+          },
+        },
       },
       total: totalOrders,
       page,
       pageSize,
       isAdmin: user.isAdmin,
       filterCompanySeq,
+      category,
     });
   } catch (error) {
     console.error("Settlement fetch error:", error);
