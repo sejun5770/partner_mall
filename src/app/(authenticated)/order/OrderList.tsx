@@ -80,11 +80,13 @@ export default function OrderList({ partnerShopId }: { partnerShopId: number }) 
 
     try {
       const res = await fetch(`/api/orders?${params}`);
-      const data: OrderResponse = await res.json();
-      setOrders(data.orders);
-      setTotal(data.total);
+      const data: Partial<OrderResponse> = await res.json().catch(() => ({}));
+      setOrders(data.orders ?? []);
+      setTotal(data.total ?? 0);
     } catch (err) {
       console.error(err);
+      setOrders([]);
+      setTotal(0);
     }
     setLoading(false);
   }, [partnerShopId, page, pageSize, orderNo, orderState, dateFrom, dateTo]);

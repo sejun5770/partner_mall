@@ -4,24 +4,29 @@ import { useState, useEffect, useCallback } from "react";
 import Pagination from "@/components/Pagination";
 
 interface Settlement {
-  id: number;
-  order_no: string;
+  order_seq: number;
+  company_seq: number;
+  login_id: string;
+  company_name: string;
   order_date: string;
-  total_money: number;
+  send_date: string | null;
+  order_name: string | null;
+  couple: string | null;
+  wedd_name: string | null;
+  planner_name: string | null;
+  card_code: string;
+  card_brand: string;
+  item_amount: number;
+  payment_amount: number;
   commission_rate: number;
   commission_amount: number;
-  settlement_amount: number;
-  order_state: string;
-  product_name: string | null;
-  partner_shop_id: number;
-  partner_name: string;
 }
 
 interface SettlementSummary {
   total_orders: number;
   total_sales: number;
-  total_commission: number;
-  total_settlement: number;
+  total_pg_amount: number | null;
+  total_commission_paid: number;
 }
 
 interface SettlementResponse {
@@ -30,42 +35,44 @@ interface SettlementResponse {
   total: number;
   page: number;
   pageSize: number;
-  isAdmin: boolean;
-  filterPartnerShopId: number | null;
 }
 
 interface PartnerOption {
   id: number;
+  login_id: string;
   partner_name: string;
 }
 
 type FilterMode = "month" | "range";
+
+const DASH = "-";
+
+function fmtMonth(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
 
 export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
   const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [summary, setSummary] = useState<SettlementSummary | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(true);
 
   const [filterMode, setFilterMode] = useState<FilterMode>("month");
-  const [month, setMonth] = useState(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  });
+  const [month, setMonth] = useState(() => fmtMonth(new Date()));
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
   const [partners, setPartners] = useState<PartnerOption[]>([]);
   const [selectedPartnerId, setSelectedPartnerId] = useState<string>("");
+  const [partnerNameSearch, setPartnerNameSearch] = useState<string>("");
 
-  // Load partner list (admin only).
   useEffect(() => {
     if (!isAdmin) return;
     fetch("/api/settlement/partners")
       .then((r) => (r.ok ? r.json() : Promise.reject(r)))
-      .then((data: { partners: PartnerOption[] }) => setPartners(data.partners))
+      .then((data: { partners: PartnerOption[] }) => setPartners(data.partners ?? []))
       .catch((err) => console.error("partner list error", err));
   }, [isAdmin]);
 
@@ -81,21 +88,23 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
       if (dateFrom) params.set("dateFrom", dateFrom);
       if (dateTo) params.set("dateTo", dateTo);
     }
-    if (isAdmin && selectedPartnerId) {
-      params.set("partnerShopId", selectedPartnerId);
-    }
+    if (isAdmin && selectedPartnerId) params.set("partnerShopId", selectedPartnerId);
+    if (isAdmin && partnerNameSearch) params.set("partnerName", partnerNameSearch);
 
     try {
       const res = await fetch(`/api/settlement?${params}`);
-      const data: SettlementResponse = await res.json();
+      const data: Partial<SettlementResponse> = await res.json().catch(() => ({}));
       setSettlements(data.settlements ?? []);
       setSummary(data.summary ?? null);
       setTotal(data.total ?? 0);
     } catch (err) {
       console.error(err);
+      setSettlements([]);
+      setSummary(null);
+      setTotal(0);
     }
     setLoading(false);
-  }, [page, pageSize, filterMode, month, dateFrom, dateTo, isAdmin, selectedPartnerId]);
+  }, [page, pageSize, filterMode, month, dateFrom, dateTo, isAdmin, selectedPartnerId, partnerNameSearch]);
 
   useEffect(() => {
     fetchSettlements();
@@ -109,130 +118,188 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
 
   const handleReset = () => {
     setFilterMode("month");
-    const now = new Date();
-    setMonth(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
+    setMonth(fmtMonth(new Date()));
     setDateFrom("");
     setDateTo("");
     setSelectedPartnerId("");
+    setPartnerNameSearch("");
+    setPage(1);
+  };
+
+  const setPrevMonth = () => {
+    setFilterMode("month");
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() - 1);
+    setMonth(fmtMonth(d));
+    setPage(1);
+  };
+  const setCurrMonth = () => {
+    setFilterMode("month");
+    setMonth(fmtMonth(new Date()));
     setPage(1);
   };
 
   const totalPages = Math.ceil(total / pageSize);
-  const showPartnerCol = isAdmin && !selectedPartnerId;
-  const colSpan = showPartnerCol ? 10 : 9;
+  const showPartnerCols = isAdmin && !selectedPartnerId;
+  // columns: NO, [아이디, 제휴사명], 주문번호, 주문상태, 주문일, 결제일, 배송일, 주문자, 신랑신부, 예식장, 플래너명, 주문카드, 브랜드, 소비자가격, 공급가액, 결제금액, 수수료
+  const colCount = (showPartnerCols ? 2 : 0) + 15;
 
   return (
-    <>
-      <section aria-label="검색">
-        <form onSubmit={handleSearch}>
+    <div className="space-y-6">
+      {/* Filter */}
+      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <form onSubmit={handleSearch} className="space-y-4">
           {isAdmin && (
-            <div>
-              <label>
-                제휴사{" "}
+            <>
+              <div className="flex items-center gap-3">
+                <label className="w-24 text-sm font-medium text-slate-700">제휴사</label>
                 <select
                   value={selectedPartnerId}
                   onChange={(e) => {
                     setSelectedPartnerId(e.target.value);
                     setPage(1);
                   }}
+                  className="h-9 min-w-64 rounded border border-slate-300 bg-white px-2 text-sm"
                 >
                   <option value="">전체</option>
                   {partners.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {p.partner_name} (#{p.id})
+                      {p.partner_name} ({p.login_id})
                     </option>
                   ))}
                 </select>
-              </label>
-            </div>
+                <input
+                  type="text"
+                  value={partnerNameSearch}
+                  onChange={(e) => setPartnerNameSearch(e.target.value)}
+                  placeholder="제휴사명 검색 (부분일치)"
+                  className="h-9 w-64 rounded border border-slate-300 bg-white px-2 text-sm"
+                />
+              </div>
+            </>
           )}
 
-          <div>
-            <label>
-              <input
-                type="radio"
-                name="filterMode"
-                checked={filterMode === "month"}
-                onChange={() => setFilterMode("month")}
-              />{" "}
-              월 단위
-            </label>
-            <label>
-              <input
-                type="radio"
-                name="filterMode"
-                checked={filterMode === "range"}
-                onChange={() => setFilterMode("range")}
-              />{" "}
-              기간 지정
-            </label>
+          <div className="flex items-center gap-3">
+            <label className="w-24 text-sm font-medium text-slate-700">조회 구분</label>
+            <div className="flex gap-4 text-sm">
+              <label className="inline-flex items-center gap-1.5">
+                <input
+                  type="radio"
+                  name="filterMode"
+                  checked={filterMode === "month"}
+                  onChange={() => setFilterMode("month")}
+                />
+                월 단위
+              </label>
+              <label className="inline-flex items-center gap-1.5">
+                <input
+                  type="radio"
+                  name="filterMode"
+                  checked={filterMode === "range"}
+                  onChange={() => setFilterMode("range")}
+                />
+                기간 지정
+              </label>
+            </div>
           </div>
 
-          {filterMode === "month" ? (
-            <div>
-              <label>
-                정산월{" "}
+          <div className="flex items-center gap-3">
+            <label className="w-24 text-sm font-medium text-slate-700">
+              {filterMode === "month" ? "정산월" : "기간"}
+            </label>
+            {filterMode === "month" ? (
+              <div className="flex items-center gap-2">
                 <input
                   type="month"
                   value={month}
                   onChange={(e) => setMonth(e.target.value)}
+                  className="h-9 rounded border border-slate-300 bg-white px-2 text-sm"
                 />
-              </label>
-            </div>
-          ) : (
-            <div>
-              <label>
-                시작일{" "}
+                <button
+                  type="button"
+                  onClick={setPrevMonth}
+                  className="h-9 rounded border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  전월
+                </button>
+                <button
+                  type="button"
+                  onClick={setCurrMonth}
+                  className="h-9 rounded border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  당월
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
                 <input
                   type="date"
                   value={dateFrom}
                   onChange={(e) => setDateFrom(e.target.value)}
+                  className="h-9 rounded border border-slate-300 bg-white px-2 text-sm"
                 />
-              </label>
-              <label>
-                종료일{" "}
+                <span className="text-slate-400">~</span>
                 <input
                   type="date"
                   value={dateTo}
                   onChange={(e) => setDateTo(e.target.value)}
+                  className="h-9 rounded border border-slate-300 bg-white px-2 text-sm"
                 />
-              </label>
-            </div>
-          )}
+              </div>
+            )}
+          </div>
 
-          <div>
-            <button type="submit">검색</button>
-            <button type="button" onClick={handleReset}>초기화</button>
+          <div className="flex gap-2 pt-2">
+            <button
+              type="submit"
+              className="h-9 rounded bg-indigo-600 px-4 text-sm font-semibold text-white hover:bg-indigo-700"
+            >
+              검색
+            </button>
+            <button
+              type="button"
+              onClick={handleReset}
+              className="h-9 rounded border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              초기화
+            </button>
           </div>
         </form>
       </section>
 
+      {/* Summary */}
       {summary && (
-        <section aria-label="정산 요약">
-          <dl>
-            <dt>총 주문건수</dt>
-            <dd>{summary.total_orders.toLocaleString()} 건</dd>
-            <dt>총 매출액</dt>
-            <dd>{summary.total_sales.toLocaleString()} 원</dd>
-            <dt>총 수수료</dt>
-            <dd>{summary.total_commission.toLocaleString()} 원</dd>
-            <dt>정산금액</dt>
-            <dd>{summary.total_settlement.toLocaleString()} 원</dd>
-          </dl>
+        <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <SummaryCard label="총 주문건수" value={`${summary.total_orders.toLocaleString()} 건`} />
+          <SummaryCard label="총 주문금액" value={`${summary.total_sales.toLocaleString()} 원`} />
+          <SummaryCard
+            label="총 PG결제금액"
+            value={summary.total_pg_amount != null ? `${summary.total_pg_amount.toLocaleString()} 원` : DASH}
+          />
+          <SummaryCard
+            label="총 지급 수수료"
+            value={`${summary.total_commission_paid.toLocaleString()} 원`}
+            tone="negative"
+          />
         </section>
       )}
 
-      <section aria-label="정산 내역">
-        <div>
-          <span>총 {total.toLocaleString()}건</span>
-          <label>
-            {" "}표시{" "}
+      {/* List */}
+      <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
+          <span className="text-sm text-slate-600">
+            총 <strong className="text-slate-900">{total.toLocaleString()}</strong>건
+          </span>
+          <label className="text-sm text-slate-600">
+            표시{" "}
             <select
               value={pageSize}
               onChange={(e) => {
                 setPageSize(Number(e.target.value));
                 setPage(1);
               }}
+              className="ml-1 h-8 rounded border border-slate-300 bg-white px-2 text-sm"
             >
               <option value={20}>20개씩</option>
               <option value={50}>50개씩</option>
@@ -241,51 +308,131 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
           </label>
         </div>
 
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">No</th>
-              {showPartnerCol && <th scope="col">제휴사</th>}
-              <th scope="col">주문번호</th>
-              <th scope="col">상품명</th>
-              <th scope="col">주문일</th>
-              <th scope="col">주문금액</th>
-              <th scope="col">수수료율</th>
-              <th scope="col">수수료</th>
-              <th scope="col">정산금액</th>
-              <th scope="col">상태</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="bg-slate-50 text-slate-700">
               <tr>
-                <td colSpan={colSpan}>로딩 중...</td>
+                <Th>NO</Th>
+                {showPartnerCols && <Th>아이디</Th>}
+                {showPartnerCols && <Th>제휴사명</Th>}
+                <Th>주문번호</Th>
+                <Th>주문상태</Th>
+                <Th>주문일</Th>
+                <Th>결제일</Th>
+                <Th>배송일</Th>
+                <Th>주문자</Th>
+                <Th>신랑,신부</Th>
+                <Th>예식장</Th>
+                <Th>플래너명</Th>
+                <Th>주문카드</Th>
+                <Th>브랜드</Th>
+                <Th align="right">소비자가격</Th>
+                <Th align="right">공급가액</Th>
+                <Th align="right">결제금액</Th>
+                <Th align="right">수수료</Th>
               </tr>
-            ) : settlements.length === 0 ? (
-              <tr>
-                <td colSpan={colSpan}>조회된 정산 내역이 없습니다.</td>
-              </tr>
-            ) : (
-              settlements.map((s, idx) => (
-                <tr key={s.id}>
-                  <td>{total - (page - 1) * pageSize - idx}</td>
-                  {showPartnerCol && <td>{s.partner_name}</td>}
-                  <td>{s.order_no}</td>
-                  <td>{s.product_name || "-"}</td>
-                  <td>{s.order_date ? new Date(s.order_date).toLocaleDateString("ko-KR") : "-"}</td>
-                  <td>{s.total_money?.toLocaleString()}원</td>
-                  <td>{s.commission_rate}%</td>
-                  <td>{s.commission_amount?.toLocaleString()}원</td>
-                  <td>{s.settlement_amount?.toLocaleString()}원</td>
-                  <td>{s.order_state === "D" ? "정산완료" : "대기"}</td>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {loading ? (
+                <tr>
+                  <td colSpan={colCount} className="py-10 text-center text-slate-500">
+                    로딩 중...
+                  </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : settlements.length === 0 ? (
+                <tr>
+                  <td colSpan={colCount} className="py-10 text-center text-slate-500">
+                    조회된 정산 내역이 없습니다.
+                  </td>
+                </tr>
+              ) : (
+                settlements.map((s, idx) => {
+                  const sendDateLabel = s.send_date
+                    ? new Date(s.send_date).toLocaleDateString("ko-KR")
+                    : DASH;
+                  return (
+                    <tr key={s.order_seq} className="hover:bg-slate-50">
+                      <Td>{total - (page - 1) * pageSize - idx}</Td>
+                      {showPartnerCols && <Td>{s.login_id}</Td>}
+                      {showPartnerCols && <Td>{s.company_name}</Td>}
+                      <Td>{s.order_seq}</Td>
+                      <Td>
+                        <span className="inline-block rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-medium text-indigo-800">
+                          발송완료
+                        </span>
+                      </Td>
+                      <Td>{s.order_date ? new Date(s.order_date).toLocaleDateString("ko-KR") : DASH}</Td>
+                      <Td>{sendDateLabel}</Td>
+                      <Td>{sendDateLabel}</Td>
+                      <Td>{s.order_name || DASH}</Td>
+                      <Td>{s.couple || DASH}</Td>
+                      <Td>{s.wedd_name || DASH}</Td>
+                      <Td>{s.planner_name || DASH}</Td>
+                      <Td>{s.card_code}</Td>
+                      <Td>{s.card_brand}</Td>
+                      <Td align="right">{s.item_amount.toLocaleString()}</Td>
+                      <Td align="right">{DASH}</Td>
+                      <Td align="right">{s.payment_amount.toLocaleString()}</Td>
+                      <Td align="right">{s.commission_rate}%</Td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
 
-        <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
+        <div className="border-t border-slate-200 px-5 py-3">
+          <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
+        </div>
       </section>
-    </>
+    </div>
   );
+}
+
+function SummaryCard({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "positive" | "negative";
+}) {
+  const valueColor =
+    tone === "negative" ? "text-rose-600" : tone === "positive" ? "text-indigo-700" : "text-slate-900";
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="text-xs font-medium text-slate-500">{label}</div>
+      <div className={`mt-1 text-xl font-bold ${valueColor}`}>{value}</div>
+    </div>
+  );
+}
+
+function Th({
+  children,
+  align = "center",
+}: {
+  children: React.ReactNode;
+  align?: "left" | "center" | "right";
+}) {
+  const alignCls = align === "left" ? "text-left" : align === "right" ? "text-right" : "text-center";
+  return (
+    <th scope="col" className={`whitespace-nowrap px-2 py-2.5 text-[11px] font-semibold ${alignCls}`}>
+      {children}
+    </th>
+  );
+}
+
+function Td({
+  children,
+  align = "center",
+  className = "",
+}: {
+  children: React.ReactNode;
+  align?: "left" | "center" | "right";
+  className?: string;
+}) {
+  const alignCls = align === "left" ? "text-left" : align === "right" ? "text-right" : "text-center";
+  return <td className={`whitespace-nowrap px-2 py-2 ${alignCls} ${className}`}>{children}</td>;
 }

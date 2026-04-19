@@ -1,12 +1,10 @@
 import { NextResponse } from "next/server";
-import { getMysqlPool } from "@/lib/db";
+import { getMssqlPool } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
-import type { RowDataPacket } from "mysql2";
 
 /**
  * GET /api/settlement/partners
- * Admin-only. Returns the list of partner_shop rows (id, partner_name)
- * used to populate the admin filter dropdown.
+ * Admin-only. Returns bar_shop1.COMPANY rows for the partner dropdown.
  */
 export async function GET() {
   const user = await getCurrentUser();
@@ -18,13 +16,27 @@ export async function GET() {
   }
 
   try {
-    const pool = getMysqlPool();
-    const [rows] = await pool.query<RowDataPacket[]>(
-      `SELECT id, partner_name
-       FROM partner_shop
-       ORDER BY partner_name ASC`
-    );
-    return NextResponse.json({ partners: rows });
+    const pool = await getMssqlPool();
+    const result = await pool.request().query<{
+      company_seq: number;
+      login_id: string;
+      company_name: string;
+    }>(`
+      SELECT COMPANY_SEQ AS company_seq,
+             LOGIN_ID    AS login_id,
+             COMPANY_NAME AS company_name
+      FROM COMPANY
+      WHERE COMPANY_NAME IS NOT NULL
+      ORDER BY COMPANY_NAME ASC
+    `);
+
+    return NextResponse.json({
+      partners: result.recordset.map((r) => ({
+        id: r.company_seq,
+        login_id: r.login_id,
+        partner_name: r.company_name,
+      })),
+    });
   } catch (error) {
     console.error("Partner list error:", error);
     return NextResponse.json(

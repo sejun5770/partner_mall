@@ -25,7 +25,7 @@ export default function Header({ userName }: HeaderProps) {
   };
 
   return (
-    <header>
+    <header className="app-header">
       <div className="logo">
         <a href="/dashboard">
           {/* eslint-disable-next-line @next/next/no-img-element */}
