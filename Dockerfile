@@ -19,5 +19,9 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 COPY --from=builder /prisma-runtime /prisma-runtime
+# Temporary: bypass login so the app is immediately viewable after deploy.
+# Remove (or set to 0) once real auth / account provisioning is ready.
+ENV DEV_AUTH_BYPASS=1
+ENV DEV_ADMIN=1
 EXPOSE 3000
 CMD if [ -f /prisma-runtime/prisma/schema.prisma ]; then cd /prisma-runtime; DB_URL="${DATABASE_URL:-file:/app/data/database.db}"; sed -i '/^\s*url\s*=/d' prisma/schema.prisma; npx prisma db push --url "$DB_URL" --accept-data-loss 2>/dev/null || true; if [ -f prisma/seed.sql ]; then apk add --no-cache sqlite 2>/dev/null; sqlite3 "$(echo $DB_URL | sed s/file://)" < prisma/seed.sql 2>/dev/null || true; fi; cd /app; fi && node server.js
