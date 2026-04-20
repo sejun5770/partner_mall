@@ -173,7 +173,6 @@ export async function GET(request: NextRequest) {
       order_date: Date;
       src_send_date: Date;
       order_name: string | null;
-      order_opt: string | null;
       groom_name: string | null;
       bride_name: string | null;
       wedd_name: string | null;
@@ -192,10 +191,6 @@ export async function GET(request: NextRequest) {
         o.order_date,
         o.src_send_date,
         o.order_name,
-        -- The order form's "플래너(담당자명)" input uses name="order_opt"
-        -- (verified in the partner site HTML), so the planner name lives
-        -- on custom_order.order_opt.
-        o.order_opt,
         -- groom_name/bride_name hold the given name (이름); *_fname columns
         -- in this schema are the family name (성), which is not what we
         -- want to display next to the partner's settlement row.
@@ -241,7 +236,12 @@ export async function GET(request: NextRequest) {
         order_name: r.order_name ?? null,
         couple: couple || null,
         wedd_name: r.wedd_name ?? null,
-        planner_name: (r.order_opt ?? "").trim() || null,
+        // TODO: planner name column. HTML form has name="order_opt" but
+        // that column doesn't exist on custom_order at runtime (query fails
+        // with "Invalid column name"). Needs DB inspection to find the real
+        // storage column. Candidates to try when DB is reachable: card_opt,
+        // a separate custom_order_planner table, custom_order_history.
+        planner_name: null,
         card_code: r.card_code ?? "-",
         card_brand: brandName(r.card_brand),
         card_div: r.card_div ?? null,
