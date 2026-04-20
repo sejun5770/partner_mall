@@ -7,6 +7,7 @@ export function middleware(request: NextRequest) {
   // Public routes
   if (
     pathname === "/health" ||
+    pathname === "/health/" ||
     pathname.startsWith("/account/signin") ||
     pathname.startsWith("/api/account/signin") ||
     pathname.startsWith("/_next") ||
