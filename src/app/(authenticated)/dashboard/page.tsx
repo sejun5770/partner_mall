@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 
@@ -44,7 +45,7 @@ export default async function DashboardPage() {
 
 function DashboardCard({ title, href, description }: { title: string; href: string; description: string }) {
   return (
-    <a
+    <Link
       href={href}
       style={{
         flex: 1,
@@ -60,6 +61,6 @@ function DashboardCard({ title, href, description }: { title: string; href: stri
         {title}
       </h3>
       <p style={{ fontSize: "13px", color: "#666", lineHeight: "20px" }}>{description}</p>
-    </a>
+    </Link>
   );
 }

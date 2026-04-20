@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -27,7 +28,7 @@ export default function Header({ userName }: HeaderProps) {
   return (
     <header className="app-header">
       <div className="logo">
-        <a href="/dashboard">
+        <Link href="/dashboard">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="https://static.barunsoncard.com/barunsonmall/admin/images/logo_w.svg"
@@ -43,7 +44,7 @@ export default function Header({ userName }: HeaderProps) {
               (e.target as HTMLImageElement).parentElement?.appendChild(span);
             }}
           />
-        </a>
+        </Link>
       </div>
       <nav className="navbar">
         <ul>
@@ -52,7 +53,7 @@ export default function Header({ userName }: HeaderProps) {
               key={item.href}
               className={pathname.startsWith(item.href) ? "active" : ""}
             >
-              <a href={item.href}>{item.label}</a>
+              <Link href={item.href}>{item.label}</Link>
             </li>
           ))}
         </ul>
