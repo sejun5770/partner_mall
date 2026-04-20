@@ -111,8 +111,9 @@ export async function GET(request: NextRequest) {
       ) fi
     `;
 
-    // Shared WHERE clause: 발송완료 + exclude internal partner + optional filters
-    const whereClause = `
+    // WHERE for the LIST query — includes the optional category filter so
+    // pagination/ordering apply to the filtered subset.
+    const whereClauseList = `
       WHERE o.src_send_date IS NOT NULL
         AND o.src_send_date >= @startDate
         AND o.src_send_date <  @endDateExcl
@@ -120,6 +121,19 @@ export async function GET(request: NextRequest) {
         AND (@companySeq IS NULL OR o.company_seq = @companySeq)
         AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
         AND (@category IS NULL OR ${categoryExpr} = @category)
+    `;
+
+    // WHERE for the SUMMARY query — intentionally DOES NOT apply the category
+    // filter. The per-category breakdown powers the tab counts, which must
+    // stay stable as the user switches tabs; if we filtered by category here,
+    // the "전체" tab's count would collapse to just the active category.
+    const whereClauseSummary = `
+      WHERE o.src_send_date IS NOT NULL
+        AND o.src_send_date >= @startDate
+        AND o.src_send_date <  @endDateExcl
+        AND c.LOGIN_ID <> 's2_barunsoncard'
+        AND (@companySeq IS NULL OR o.company_seq = @companySeq)
+        AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
     `;
 
     // Summary (overall + per-category breakdown)
@@ -143,7 +157,7 @@ export async function GET(request: NextRequest) {
         SUM(CASE WHEN ${categoryExpr} = 'goods' THEN 1 ELSE 0 END) AS goods_orders,
         COALESCE(SUM(CASE WHEN ${categoryExpr} = 'goods' THEN o.last_total_price ELSE 0 END), 0) AS goods_sales
       ${baseFrom}
-      ${whereClause}
+      ${whereClauseSummary}
     `);
 
     const s = summaryResult.recordset[0];
@@ -159,8 +173,8 @@ export async function GET(request: NextRequest) {
       order_date: Date;
       src_send_date: Date;
       order_name: string | null;
-      groom_fname: string | null;
-      bride_fname: string | null;
+      groom_name: string | null;
+      bride_name: string | null;
       wedd_name: string | null;
       card_code: string | null;
       card_brand: string | null;
@@ -177,8 +191,11 @@ export async function GET(request: NextRequest) {
         o.order_date,
         o.src_send_date,
         o.order_name,
-        w.groom_fname,
-        w.bride_fname,
+        -- groom_name/bride_name hold the given name (이름); *_fname columns
+        -- in this schema are the family name (성), which is not what we
+        -- want to display next to the partner's settlement row.
+        w.groom_name,
+        w.bride_name,
         w.wedd_name,
         fi.Card_Code      AS card_code,
         fi.CardBrand      AS card_brand,
@@ -190,12 +207,12 @@ export async function GET(request: NextRequest) {
         o.last_total_price AS payment_amount
       ${baseFrom}
       OUTER APPLY (
-        SELECT TOP 1 wi.groom_fname, wi.bride_fname, wi.wedd_name
+        SELECT TOP 1 wi.groom_name, wi.bride_name, wi.wedd_name
         FROM custom_order_WeddInfo wi
         WHERE wi.order_seq = o.order_seq
         ORDER BY wi.id DESC
       ) w
-      ${whereClause}
+      ${whereClauseList}
       ORDER BY o.src_send_date DESC, o.order_seq DESC
       OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
     `);
@@ -205,7 +222,7 @@ export async function GET(request: NextRequest) {
       const paymentAmount = Number(r.payment_amount ?? 0);
       const ratePct = getCommissionRate(r.company_seq);
       const commission = calcCommission(paymentAmount, ratePct);
-      const couple = [r.groom_fname, r.bride_fname]
+      const couple = [r.groom_name, r.bride_name]
         .map((x) => (x ?? "").trim())
         .filter(Boolean)
         .join(",");
@@ -231,6 +248,25 @@ export async function GET(request: NextRequest) {
       };
     });
 
+    const byCategory = {
+      invitation: {
+        orders: Number(s?.invitation_orders ?? 0),
+        sales: Number(s?.invitation_sales ?? 0),
+      },
+      thankyou: {
+        orders: Number(s?.thankyou_orders ?? 0),
+        sales: Number(s?.thankyou_sales ?? 0),
+      },
+      goods: {
+        orders: Number(s?.goods_orders ?? 0),
+        sales: Number(s?.goods_sales ?? 0),
+      },
+    };
+
+    // Pagination `total` must reflect the LIST query (category-aware); the
+    // summary numbers are intentionally unfiltered so tab counts stay stable.
+    const filteredTotal = category ? byCategory[category].orders : totalOrders;
+
     return NextResponse.json({
       settlements,
       summary: {
@@ -238,22 +274,9 @@ export async function GET(request: NextRequest) {
         total_sales: totalSales,
         total_pg_amount: null,
         total_commission_paid: 0,
-        by_category: {
-          invitation: {
-            orders: Number(s?.invitation_orders ?? 0),
-            sales: Number(s?.invitation_sales ?? 0),
-          },
-          thankyou: {
-            orders: Number(s?.thankyou_orders ?? 0),
-            sales: Number(s?.thankyou_sales ?? 0),
-          },
-          goods: {
-            orders: Number(s?.goods_orders ?? 0),
-            sales: Number(s?.goods_sales ?? 0),
-          },
-        },
+        by_category: byCategory,
       },
-      total: totalOrders,
+      total: filteredTotal,
       page,
       pageSize,
       isAdmin: user.isAdmin,
