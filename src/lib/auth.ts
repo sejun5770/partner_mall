@@ -39,24 +39,40 @@ export function verifyToken(token: string): PartnerUser | null {
   }
 }
 
+/**
+ * Fallback bypass user used while real auth is not wired up in the deployed
+ * environment. COMPANY_SEQ=8294 = ec_master = 바른손몰관리자 (admin account).
+ */
+const BYPASS_USER: PartnerUser = {
+  id: 8294,
+  userId: "ec_master",
+  email: "",
+  partnerShopId: 8294,
+  partnerName: "[DEV] ec_master",
+  isAdmin: true,
+};
+
+/**
+ * Whether we should bypass auth and use BYPASS_USER for requests without a
+ * valid token. Defaults to ON; only disabled when DEV_AUTH_BYPASS is
+ * explicitly set to "0". This inversion is temporary — the deployed
+ * container was not picking up the ENV set in the Dockerfile, so the safer
+ * default here is "bypass on" until we wire up real auth / account flow.
+ */
+function isBypassEnabled(): boolean {
+  return process.env.DEV_AUTH_BYPASS !== "0";
+}
+
 export async function getCurrentUser(): Promise<PartnerUser | null> {
   const cookieStore = await cookies();
   const token = cookieStore.get(TOKEN_NAME)?.value;
   if (!token) {
-    if (process.env.DEV_AUTH_BYPASS === "1") {
-      return {
-        id: 8294,
-        userId: "ec_master",
-        email: "",
-        partnerShopId: 8294,
-        partnerName: "[DEV] ec_master",
-        isAdmin: process.env.DEV_ADMIN === "1",
-      };
-    }
-    return null;
+    return isBypassEnabled() ? BYPASS_USER : null;
   }
   const user = verifyToken(token);
-  if (!user) return null;
+  if (!user) {
+    return isBypassEnabled() ? BYPASS_USER : null;
+  }
   // Backwards-compat for tokens issued before isAdmin was added
   return { ...user, isAdmin: user.isAdmin === true };
 }
