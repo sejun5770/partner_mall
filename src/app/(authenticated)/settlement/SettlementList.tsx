@@ -34,7 +34,6 @@ interface CategoryStat {
 interface SettlementSummary {
   total_orders: number;
   total_sales: number;
-  total_pg_amount: number | null;
   total_commission_paid: number;
   by_category?: {
     invitation: CategoryStat;
@@ -145,6 +144,22 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
   useEffect(() => {
     fetchSettlements();
   }, [fetchSettlements]);
+
+  // Excel (CSV) download of the current filter set. Uses the same query
+  // params as the list fetch so what the user sees on screen is what they
+  // get in the file.
+  const handleExport = () => {
+    const params = new URLSearchParams();
+    if (filterMode === "month" && month) params.set("month", month);
+    else if (filterMode === "range") {
+      if (dateFrom) params.set("dateFrom", dateFrom);
+      if (dateTo) params.set("dateTo", dateTo);
+    }
+    if (isAdmin && selectedPartnerId) params.set("partnerShopId", selectedPartnerId);
+    if (isAdmin && partnerNameSearch) params.set("partnerName", partnerNameSearch);
+    if (categoryTab !== "all") params.set("category", categoryTab);
+    window.location.href = `/api/settlement/export?${params}`;
+  };
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -341,15 +356,12 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
         </section>
       )}
 
-      {/* Totals */}
+      {/* Totals — order-level. 총 결제금액 is SUM(last_total_price), so it
+          reflects the actual 결제금액 (includes delivery/jebon/coupon etc.). */}
       {summary && (
-        <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <section className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <SummaryCard label="총 주문건수" value={`${summary.total_orders.toLocaleString()} 건`} />
-          <SummaryCard label="총 주문금액" value={`${summary.total_sales.toLocaleString()} 원`} />
-          <SummaryCard
-            label="총 PG결제금액"
-            value={summary.total_pg_amount != null ? `${summary.total_pg_amount.toLocaleString()} 원` : DASH}
-          />
+          <SummaryCard label="총 결제금액" value={`${summary.total_sales.toLocaleString()} 원`} />
           <SummaryCard
             label="총 지급 수수료"
             value={`${summary.total_commission_paid.toLocaleString()} 원`}
@@ -397,21 +409,31 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
           <span className="text-sm text-slate-600">
             총 <strong className="text-slate-900">{total.toLocaleString()}</strong>건
           </span>
-          <label className="text-sm text-slate-600">
-            표시{" "}
-            <select
-              value={pageSize}
-              onChange={(e) => {
-                setPageSize(Number(e.target.value));
-                setPage(1);
-              }}
-              className="ml-1 h-8 rounded border border-slate-300 bg-white px-2 text-sm"
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExport}
+              disabled={loading || total === 0}
+              className="h-8 rounded bg-emerald-600 px-3 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
             >
-              <option value={20}>20개씩</option>
-              <option value={50}>50개씩</option>
-              <option value={100}>100개씩</option>
-            </select>
-          </label>
+              엑셀 다운로드
+            </button>
+            <label className="text-sm text-slate-600">
+              표시{" "}
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setPage(1);
+                }}
+                className="ml-1 h-8 rounded border border-slate-300 bg-white px-2 text-sm"
+              >
+                <option value={20}>20개씩</option>
+                <option value={50}>50개씩</option>
+                <option value={100}>100개씩</option>
+              </select>
+            </label>
+          </div>
         </div>
 
         <div className="overflow-x-auto">

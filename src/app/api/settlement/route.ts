@@ -9,21 +9,33 @@ import { categoryCaseSql, Category } from "@/lib/category";
 /**
  * GET /api/settlement
  *
- * Data source: bar_shop1 MSSQL (custom_order + COMPANY + custom_order_item + S2_Card).
+ * Data source: bar_shop1 MSSQL.
+ *
+ * Aggregation model (item-level):
+ *   - The per-category breakdown is aggregated at the `custom_order_item`
+ *     × `S2_Card.Card_Div` level. A single order that bundles items from
+ *     multiple categories contributes to each of those categories — its
+ *     invitation items count toward 청첩장, its goods items toward 기념굿즈,
+ *     and so on.
+ *   - Per-category sales = SUM(item_sale_price * item_count) for matching
+ *     items only (does NOT include order-level fees — delivery, jebon,
+ *     coupons — since those cannot be cleanly attributed to an item).
+ *   - The overall 총 결제금액 card uses SUM(last_total_price) per distinct
+ *     order, which IS the true payment total (includes all fees and
+ *     discounts). The sum of the three category "sales" will typically be
+ *     less than the overall 총 결제금액 because of those fees.
  *
  * Business rules:
  *   - Only 발송완료 orders (src_send_date IS NOT NULL).
- *   - Excludes s2_barunsoncard (바른손카드 자체 주문; internal, not a partner).
- *   - Date filtering is on src_send_date (settlement month = shipment month).
- *   - 결제일/배송일 columns both display src_send_date per business spec.
- *   - Category is derived from the first item's S2_Card.Card_Div:
- *       A01 → invitation (청첩장), A03 → thankyou (답례품), else → goods (기념굿즈).
+ *   - Excludes s2_barunsoncard (내부 자체 주문, not a partner).
+ *   - Date range is applied on src_send_date (settlement = shipment month).
+ *   - Non-admin partners are locked to the 청첩장 category server-side.
  *
  * Query params:
  *   - page, pageSize
  *   - month=YYYY-MM  (takes precedence over dateFrom/dateTo)
  *   - dateFrom=YYYY-MM-DD, dateTo=YYYY-MM-DD
- *   - category=invitation|thankyou|goods
+ *   - category=invitation|thankyou|goods  (admin only; ignored for partner)
  *   - partnerShopId   admin-only; filters to one COMPANY_SEQ
  *   - partnerName     admin-only; LIKE partial match on COMPANY_NAME
  */
@@ -57,11 +69,7 @@ export async function GET(request: NextRequest) {
     filterCompanySeq = user.partnerShopId;
   }
 
-  // Non-admin partners are restricted to the 청첩장 (invitation) category.
-  // Even if a crafted request sets ?category=thankyou, this forces invitation.
-  const category: Category | null = user.isAdmin
-    ? requestedCategory
-    : "invitation";
+  const category: Category | null = user.isAdmin ? requestedCategory : "invitation";
 
   // Date range resolution (applied to src_send_date)
   let startDate: string;
@@ -101,11 +109,13 @@ export async function GET(request: NextRequest) {
       .input("offset", sql.Int, (page - 1) * pageSize)
       .input("pageSize", sql.Int, pageSize);
 
-    // The derived category for an order comes from the first item's Card_Div.
-    // Expose it once via OUTER APPLY and reuse for filter + display + summary.
-    const categoryExpr = categoryCaseSql("fi.Card_Div");
+    // First-item category (used for the list row's "분류" badge and for the
+    // order's primary card code/brand). List filtering uses EXISTS instead,
+    // so a mixed order can still match via a non-primary item.
+    const firstItemCategoryExpr = categoryCaseSql("fi.Card_Div");
+    const itemCategoryExpr = categoryCaseSql("sc.Card_Div");
 
-    const baseFrom = `
+    const baseOrderJoins = `
       FROM custom_order o
       JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
       OUTER APPLY (
@@ -117,72 +127,95 @@ export async function GET(request: NextRequest) {
       ) fi
     `;
 
-    // WHERE for the LIST query — includes the optional category filter so
-    // pagination/ordering apply to the filtered subset.
-    const whereClauseList = `
-      WHERE o.src_send_date IS NOT NULL
+    // Shared filters (no category predicate yet)
+    const sharedFilters = `
+      o.src_send_date IS NOT NULL
         AND o.src_send_date >= @startDate
         AND o.src_send_date <  @endDateExcl
         AND c.LOGIN_ID <> 's2_barunsoncard'
         AND (@companySeq IS NULL OR o.company_seq = @companySeq)
         AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
-        AND (@category IS NULL OR ${categoryExpr} = @category)
     `;
 
-    // WHERE for the SUMMARY query.
-    // Admin: no category predicate, so the per-category breakdown can power
-    //   stable tab counts as the user switches tabs.
-    // Non-admin: category is locked to invitation for safety/privacy, so we
-    //   also apply it here — thankyou/goods numbers come back as 0 and the
-    //   partner only sees their 청첩장 figures.
-    const whereClauseSummary = user.isAdmin
-      ? `
-        WHERE o.src_send_date IS NOT NULL
-          AND o.src_send_date >= @startDate
-          AND o.src_send_date <  @endDateExcl
-          AND c.LOGIN_ID <> 's2_barunsoncard'
-          AND (@companySeq IS NULL OR o.company_seq = @companySeq)
-          AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
-      `
-      : `
-        WHERE o.src_send_date IS NOT NULL
-          AND o.src_send_date >= @startDate
-          AND o.src_send_date <  @endDateExcl
-          AND c.LOGIN_ID <> 's2_barunsoncard'
-          AND (@companySeq IS NULL OR o.company_seq = @companySeq)
-          AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
-          AND ${categoryExpr} = 'invitation'
-      `;
+    // Existence-based category predicate: an order matches the category if
+    // at least one of its items belongs to that category.
+    const categoryExistsPredicate = `
+      EXISTS (
+        SELECT 1
+        FROM custom_order_item oi
+        JOIN S2_Card sc ON sc.Card_Seq = oi.card_seq
+        WHERE oi.order_seq = o.order_seq
+          AND ${itemCategoryExpr} = @category
+      )
+    `;
 
-    // Summary (overall + per-category breakdown)
-    const summaryResult = await req.query<{
+    const whereClauseList = `
+      WHERE ${sharedFilters}
+        AND (@category IS NULL OR ${categoryExistsPredicate})
+    `;
+
+    // Overall summary (order-level): distinct order count + SUM(last_total_price)
+    // for the true payment amount. For non-admin we also apply the category
+    // predicate so totals match the restricted scope.
+    const whereClauseOverall = user.isAdmin
+      ? `WHERE ${sharedFilters}`
+      : `WHERE ${sharedFilters} AND ${categoryExistsPredicate.replace("@category", "'invitation'")}`;
+
+    const overallResult = await req.query<{
       total_orders: number;
       total_sales: number | null;
-      invitation_orders: number;
-      invitation_sales: number | null;
-      thankyou_orders: number;
-      thankyou_sales: number | null;
-      goods_orders: number;
-      goods_sales: number | null;
     }>(`
       SELECT
         COUNT(*) AS total_orders,
-        COALESCE(SUM(o.last_total_price), 0) AS total_sales,
-        SUM(CASE WHEN ${categoryExpr} = 'invitation' THEN 1 ELSE 0 END) AS invitation_orders,
-        COALESCE(SUM(CASE WHEN ${categoryExpr} = 'invitation' THEN o.last_total_price ELSE 0 END), 0) AS invitation_sales,
-        SUM(CASE WHEN ${categoryExpr} = 'thankyou' THEN 1 ELSE 0 END) AS thankyou_orders,
-        COALESCE(SUM(CASE WHEN ${categoryExpr} = 'thankyou' THEN o.last_total_price ELSE 0 END), 0) AS thankyou_sales,
-        SUM(CASE WHEN ${categoryExpr} = 'goods' THEN 1 ELSE 0 END) AS goods_orders,
-        COALESCE(SUM(CASE WHEN ${categoryExpr} = 'goods' THEN o.last_total_price ELSE 0 END), 0) AS goods_sales
-      ${baseFrom}
-      ${whereClauseSummary}
+        COALESCE(SUM(o.last_total_price), 0) AS total_sales
+      ${baseOrderJoins}
+      ${whereClauseOverall}
     `);
 
-    const s = summaryResult.recordset[0];
-    const totalOrders = Number(s?.total_orders ?? 0);
-    const totalSales = Number(s?.total_sales ?? 0);
+    const overall = overallResult.recordset[0];
+    const totalOrders = Number(overall?.total_orders ?? 0);
+    const totalSales = Number(overall?.total_sales ?? 0);
 
-    // List
+    // Per-category breakdown (item-level). Admin gets all three; non-admin
+    // only invitation (thankyou/goods come back zero because their items
+    // aren't joined for this user's scope).
+    const categoryWhereForSummary = user.isAdmin
+      ? ""
+      : `AND ${itemCategoryExpr} = 'invitation'`;
+    const perCategoryResult = await req.query<{
+      cat: Category;
+      orders: number;
+      sales: number | null;
+    }>(`
+      SELECT
+        ${itemCategoryExpr} AS cat,
+        COUNT(DISTINCT o.order_seq) AS orders,
+        COALESCE(SUM(oi.item_sale_price * oi.item_count), 0) AS sales
+      FROM custom_order o
+      JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
+      JOIN custom_order_item oi ON oi.order_seq = o.order_seq
+      JOIN S2_Card sc ON sc.Card_Seq = oi.card_seq
+      WHERE ${sharedFilters}
+        ${categoryWhereForSummary}
+      GROUP BY ${itemCategoryExpr}
+    `);
+
+    const byCategory = {
+      invitation: { orders: 0, sales: 0 },
+      thankyou: { orders: 0, sales: 0 },
+      goods: { orders: 0, sales: 0 },
+    };
+    for (const row of perCategoryResult.recordset) {
+      if (row.cat === "invitation" || row.cat === "thankyou" || row.cat === "goods") {
+        byCategory[row.cat] = {
+          orders: Number(row.orders ?? 0),
+          sales: Number(row.sales ?? 0),
+        };
+      }
+    }
+
+    // List — paginated, one row per order. Filter by EXISTS so mixed orders
+    // still match via any item. Display category = first item's category.
     const listResult = await req.query<{
       order_seq: number;
       company_seq: number;
@@ -209,21 +242,18 @@ export async function GET(request: NextRequest) {
         o.order_date,
         o.src_send_date,
         o.order_name,
-        -- groom_name/bride_name hold the given name (이름); *_fname columns
-        -- in this schema are the family name (성), which is not what we
-        -- want to display next to the partner's settlement row.
         w.groom_name,
         w.bride_name,
         w.wedd_name,
         fi.Card_Code      AS card_code,
         fi.CardBrand      AS card_brand,
         fi.Card_Div       AS card_div,
-        ${categoryExpr}   AS category,
+        ${firstItemCategoryExpr}   AS category,
         (SELECT SUM(oi.item_sale_price * oi.item_count)
            FROM custom_order_item oi
            WHERE oi.order_seq = o.order_seq) AS item_amount,
         o.last_total_price AS payment_amount
-      ${baseFrom}
+      ${baseOrderJoins}
       OUTER APPLY (
         SELECT TOP 1 wi.groom_name, wi.bride_name, wi.wedd_name
         FROM custom_order_WeddInfo wi
@@ -254,12 +284,7 @@ export async function GET(request: NextRequest) {
         order_name: r.order_name ?? null,
         couple: couple || null,
         wedd_name: r.wedd_name ?? null,
-        // TODO: planner name column. HTML form has name="order_opt" but
-        // that column doesn't exist on custom_order at runtime (query fails
-        // with "Invalid column name"). Needs DB inspection to find the real
-        // storage column. Candidates to try when DB is reachable: card_opt,
-        // a separate custom_order_planner table, custom_order_history.
-        planner_name: null,
+        planner_name: null, // TODO: column not yet identified in bar_shop1
         card_code: r.card_code ?? "-",
         card_brand: brandName(r.card_brand),
         card_div: r.card_div ?? null,
@@ -271,23 +296,8 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    const byCategory = {
-      invitation: {
-        orders: Number(s?.invitation_orders ?? 0),
-        sales: Number(s?.invitation_sales ?? 0),
-      },
-      thankyou: {
-        orders: Number(s?.thankyou_orders ?? 0),
-        sales: Number(s?.thankyou_sales ?? 0),
-      },
-      goods: {
-        orders: Number(s?.goods_orders ?? 0),
-        sales: Number(s?.goods_sales ?? 0),
-      },
-    };
-
-    // Pagination `total` must reflect the LIST query (category-aware); the
-    // summary numbers are intentionally unfiltered so tab counts stay stable.
+    // Pagination total: when a category is active, use the category's order
+    // count (distinct orders in that category); otherwise the overall total.
     const filteredTotal = category ? byCategory[category].orders : totalOrders;
 
     return NextResponse.json({
@@ -295,8 +305,7 @@ export async function GET(request: NextRequest) {
       summary: {
         total_orders: totalOrders,
         total_sales: totalSales,
-        total_pg_amount: null,
-        total_commission_paid: 0,
+        total_commission_paid: 0, // not implemented (closing table TBD)
         by_category: byCategory,
       },
       total: filteredTotal,
