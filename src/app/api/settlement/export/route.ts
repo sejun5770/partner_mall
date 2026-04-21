@@ -9,12 +9,13 @@ import { categoryCaseSql, Category, CATEGORY_LABEL } from "@/lib/category";
 /**
  * GET /api/settlement/export
  *
- * Returns the full (unpaginated) settlement list for the currently active
- * filters as a CSV download. Mirrors the logic of /api/settlement — the
- * only differences are: no OFFSET/FETCH (all rows), no summary aggregates,
- * CSV response instead of JSON.
+ * CSV download of the current filter set (same logic as the list
+ * endpoint, but unpaginated). Matches the list's item-level semantics:
+ * when a category is selected, rows are (order × that category) slices
+ * with the category's item sum as 결제금액; when no category, rows are
+ * order-level with last_total_price.
  *
- * Encoded as UTF-8 with BOM so Excel opens the Korean headers correctly.
+ * Encoded UTF-8 with BOM for Excel compatibility.
  */
 export async function GET(request: NextRequest) {
   const user = await getCurrentUser();
@@ -46,7 +47,6 @@ export async function GET(request: NextRequest) {
 
   const category: Category | null = user.isAdmin ? requestedCategory : "invitation";
 
-  // Date range resolution (same as list endpoint)
   let startDate: string;
   let endDateExcl: string;
   if (month && /^\d{4}-\d{2}$/.test(month)) {
@@ -85,7 +85,16 @@ export async function GET(request: NextRequest) {
     const firstItemCategoryExpr = categoryCaseSql("fi.Card_Div");
     const itemCategoryExpr = categoryCaseSql("sc.Card_Div");
 
-    const result = await req.query<{
+    const sharedFilters = `
+      o.src_send_date IS NOT NULL
+        AND o.src_send_date >= @startDate
+        AND o.src_send_date <  @endDateExcl
+        AND c.LOGIN_ID <> 's2_barunsoncard'
+        AND (@companySeq IS NULL OR o.company_seq = @companySeq)
+        AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
+    `;
+
+    type ExportRow = {
       order_seq: number;
       company_seq: number;
       login_id: string;
@@ -102,58 +111,99 @@ export async function GET(request: NextRequest) {
       category: Category;
       item_amount: number | null;
       payment_amount: number | null;
-    }>(`
-      SELECT
-        o.order_seq,
-        c.COMPANY_SEQ     AS company_seq,
-        c.LOGIN_ID        AS login_id,
-        c.COMPANY_NAME    AS company_name,
-        o.order_date,
-        o.src_send_date,
-        o.order_name,
-        w.groom_name,
-        w.bride_name,
-        w.wedd_name,
-        fi.Card_Code      AS card_code,
-        fi.CardBrand      AS card_brand,
-        fi.Card_Div       AS card_div,
-        ${firstItemCategoryExpr}   AS category,
-        (SELECT SUM(oi.item_sale_price * oi.item_count)
-           FROM custom_order_item oi
-           WHERE oi.order_seq = o.order_seq) AS item_amount,
-        o.last_total_price AS payment_amount
-      FROM custom_order o
-      JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
-      OUTER APPLY (
-        SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div
-        FROM custom_order_item oi
-        JOIN S2_Card sc ON oi.card_seq = sc.Card_Seq
-        WHERE oi.order_seq = o.order_seq
-        ORDER BY oi.id ASC
-      ) fi
+    };
+
+    const weddJoin = `
       OUTER APPLY (
         SELECT TOP 1 wi.groom_name, wi.bride_name, wi.wedd_name
         FROM custom_order_WeddInfo wi
         WHERE wi.order_seq = o.order_seq
         ORDER BY wi.id DESC
       ) w
-      WHERE o.src_send_date IS NOT NULL
-        AND o.src_send_date >= @startDate
-        AND o.src_send_date <  @endDateExcl
-        AND c.LOGIN_ID <> 's2_barunsoncard'
-        AND (@companySeq IS NULL OR o.company_seq = @companySeq)
-        AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
-        AND (@category IS NULL OR EXISTS (
-          SELECT 1
-          FROM custom_order_item oi
+    `;
+
+    let result;
+    if (category) {
+      result = await req.query<ExportRow>(`
+        WITH cat_slice AS (
+          SELECT
+            o.order_seq,
+            SUM(oi.item_sale_price * oi.item_count) AS amount
+          FROM custom_order o
+          JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
+          JOIN custom_order_item oi ON oi.order_seq = o.order_seq
           JOIN S2_Card sc ON sc.Card_Seq = oi.card_seq
+          WHERE ${sharedFilters}
+            AND ${itemCategoryExpr} = @category
+          GROUP BY o.order_seq
+        )
+        SELECT
+          o.order_seq,
+          c.COMPANY_SEQ     AS company_seq,
+          c.LOGIN_ID        AS login_id,
+          c.COMPANY_NAME    AS company_name,
+          o.order_date,
+          o.src_send_date,
+          o.order_name,
+          w.groom_name,
+          w.bride_name,
+          w.wedd_name,
+          fi.Card_Code      AS card_code,
+          fi.CardBrand      AS card_brand,
+          fi.Card_Div       AS card_div,
+          @category         AS category,
+          cs.amount         AS item_amount,
+          cs.amount         AS payment_amount
+        FROM custom_order o
+        JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
+        JOIN cat_slice cs ON cs.order_seq = o.order_seq
+        OUTER APPLY (
+          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div
+          FROM custom_order_item oi
+          JOIN S2_Card sc ON oi.card_seq = sc.Card_Seq
           WHERE oi.order_seq = o.order_seq
             AND ${itemCategoryExpr} = @category
-        ))
-      ORDER BY o.src_send_date DESC, o.order_seq DESC
-    `);
+          ORDER BY oi.id ASC
+        ) fi
+        ${weddJoin}
+        ORDER BY o.src_send_date DESC, o.order_seq DESC
+      `);
+    } else {
+      result = await req.query<ExportRow>(`
+        SELECT
+          o.order_seq,
+          c.COMPANY_SEQ     AS company_seq,
+          c.LOGIN_ID        AS login_id,
+          c.COMPANY_NAME    AS company_name,
+          o.order_date,
+          o.src_send_date,
+          o.order_name,
+          w.groom_name,
+          w.bride_name,
+          w.wedd_name,
+          fi.Card_Code      AS card_code,
+          fi.CardBrand      AS card_brand,
+          fi.Card_Div       AS card_div,
+          ${firstItemCategoryExpr} AS category,
+          (SELECT SUM(oi.item_sale_price * oi.item_count)
+             FROM custom_order_item oi
+             WHERE oi.order_seq = o.order_seq) AS item_amount,
+          o.last_total_price AS payment_amount
+        FROM custom_order o
+        JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
+        OUTER APPLY (
+          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div
+          FROM custom_order_item oi
+          JOIN S2_Card sc ON oi.card_seq = sc.Card_Seq
+          WHERE oi.order_seq = o.order_seq
+          ORDER BY oi.id ASC
+        ) fi
+        ${weddJoin}
+        WHERE ${sharedFilters}
+        ORDER BY o.src_send_date DESC, o.order_seq DESC
+      `);
+    }
 
-    // Build CSV
     const headers = [
       ...(user.isAdmin ? ["아이디", "제휴사명"] : []),
       "주문번호",
@@ -202,11 +252,11 @@ export async function GET(request: NextRequest) {
         r.order_name ?? "",
         couple,
         r.wedd_name ?? "",
-        "", // planner name: column not yet identified
+        "", // planner: not yet identified
         r.card_code ?? "",
         brandName(r.card_brand),
         String(itemAmount),
-        "", // 공급가액: not yet mapped
+        "",
         String(paymentAmount),
         `${ratePct}%`,
         String(commission),
@@ -225,12 +275,9 @@ export async function GET(request: NextRequest) {
       ...rows.map((row) => row.map(escapeCsv).join(",")),
     ].join("\r\n");
 
-    const bom = "\uFEFF";
-    const body = bom + csvBody;
+    const filename = `settlement_${startDate}_${endDateExcl}${category ? `_${category}` : ""}.csv`;
 
-    const filename = `settlement_${startDate}_${endDateExcl}.csv`;
-
-    return new NextResponse(body, {
+    return new NextResponse("\uFEFF" + csvBody, {
       status: 200,
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
