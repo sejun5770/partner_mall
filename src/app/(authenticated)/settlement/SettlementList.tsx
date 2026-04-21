@@ -85,7 +85,8 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
-  const [categoryTab, setCategoryTab] = useState<CategoryTab>("all");
+  // Non-admin partners only see 청첩장; admins start on "전체".
+  const [categoryTab, setCategoryTab] = useState<CategoryTab>(isAdmin ? "all" : "invitation");
 
   const [partners, setPartners] = useState<PartnerOption[]>([]);
   const [selectedPartnerId, setSelectedPartnerId] = useState<string>("");
@@ -158,7 +159,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
     setDateTo("");
     setSelectedPartnerId("");
     setPartnerNameSearch("");
-    setCategoryTab("all");
+    setCategoryTab(isAdmin ? "all" : "invitation");
     setPage(1);
   };
 
@@ -178,9 +179,12 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
 
   const totalPages = Math.ceil(total / pageSize);
   const showPartnerCols = isAdmin && !selectedPartnerId;
-  // columns: NO, [아이디, 제휴사명], 주문번호, 카테고리, 주문상태, 주문일, 결제일, 배송일,
+  // Category column ("분류") is admin-only; non-admin partners are locked
+  // to the 청첩장 category and the column would always say "청첩장".
+  const showCategoryCol = isAdmin;
+  // columns: NO, [아이디, 제휴사명], 주문번호, [분류], 주문상태, 주문일, 결제일, 배송일,
   //          주문자, 신랑신부, 예식장, 플래너명, 주문카드, 브랜드, 소비자가격, 공급가액, 결제금액, 수수료
-  const colCount = (showPartnerCols ? 2 : 0) + 16;
+  const colCount = (showPartnerCols ? 2 : 0) + (showCategoryCol ? 1 : 0) + 15;
 
   const byCat = summary?.by_category;
   const tabs: { key: CategoryTab; label: string; count?: number }[] = [
@@ -311,9 +315,10 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
         </form>
       </section>
 
-      {/* Per-category summary (always derived from the unfiltered-by-category summary
-          so users see the breakdown even when a single category tab is active). */}
-      {summary && byCat && (
+      {/* Per-category summary — admin only. Non-admin partners only see
+          the 청첩장 category, so the 3-up breakdown would just be
+          invitation-plus-two-zeros. */}
+      {isAdmin && summary && byCat && (
         <section className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <CategoryCard
             label="청첩장"
@@ -355,35 +360,38 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
 
       {/* List */}
       <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
-        {/* Category tabs */}
-        <div role="tablist" className="flex gap-1 border-b border-slate-200 px-3 pt-3">
-          {tabs.map((t) => {
-            const active = categoryTab === t.key;
-            return (
-              <button
-                key={t.key}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => {
-                  setCategoryTab(t.key);
-                  setPage(1);
-                }}
-                className={
-                  "-mb-px rounded-t border border-b-0 px-4 py-2 text-sm font-medium " +
-                  (active
-                    ? "border-slate-200 bg-white text-indigo-700"
-                    : "border-transparent text-slate-500 hover:text-slate-800")
-                }
-              >
-                {t.label}
-                {typeof t.count === "number" && (
-                  <span className="ml-1.5 text-xs text-slate-400">{t.count.toLocaleString()}</span>
-                )}
-              </button>
-            );
-          })}
-        </div>
+        {/* Category tabs — admin only. Non-admin partners are restricted to
+            the 청첩장 category on the server side as well. */}
+        {isAdmin && (
+          <div role="tablist" className="flex gap-1 border-b border-slate-200 px-3 pt-3">
+            {tabs.map((t) => {
+              const active = categoryTab === t.key;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => {
+                    setCategoryTab(t.key);
+                    setPage(1);
+                  }}
+                  className={
+                    "-mb-px rounded-t border border-b-0 px-4 py-2 text-sm font-medium " +
+                    (active
+                      ? "border-slate-200 bg-white text-indigo-700"
+                      : "border-transparent text-slate-500 hover:text-slate-800")
+                  }
+                >
+                  {t.label}
+                  {typeof t.count === "number" && (
+                    <span className="ml-1.5 text-xs text-slate-400">{t.count.toLocaleString()}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
           <span className="text-sm text-slate-600">
@@ -414,7 +422,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                 {showPartnerCols && <Th>아이디</Th>}
                 {showPartnerCols && <Th>제휴사명</Th>}
                 <Th>주문번호</Th>
-                <Th>분류</Th>
+                {showCategoryCol && <Th>분류</Th>}
                 <Th>주문상태</Th>
                 <Th>주문일</Th>
                 <Th>결제일</Th>
@@ -455,13 +463,15 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                       {showPartnerCols && <Td>{s.login_id}</Td>}
                       {showPartnerCols && <Td>{s.company_name}</Td>}
                       <Td>{s.order_seq}</Td>
-                      <Td>
-                        <span
-                          className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${CATEGORY_BADGE_CLASS[s.category]}`}
-                        >
-                          {CATEGORY_LABEL[s.category]}
-                        </span>
-                      </Td>
+                      {showCategoryCol && (
+                        <Td>
+                          <span
+                            className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${CATEGORY_BADGE_CLASS[s.category]}`}
+                          >
+                            {CATEGORY_LABEL[s.category]}
+                          </span>
+                        </Td>
+                      )}
                       <Td>
                         <span className="inline-block rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-medium text-indigo-800">
                           발송완료

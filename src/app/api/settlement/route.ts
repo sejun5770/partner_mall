@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
   const dateTo = searchParams.get("dateTo");
 
   const rawCategory = searchParams.get("category");
-  const category: Category | null =
+  const requestedCategory: Category | null =
     rawCategory === "invitation" || rawCategory === "thankyou" || rawCategory === "goods"
       ? rawCategory
       : null;
@@ -56,6 +56,12 @@ export async function GET(request: NextRequest) {
   } else {
     filterCompanySeq = user.partnerShopId;
   }
+
+  // Non-admin partners are restricted to the 청첩장 (invitation) category.
+  // Even if a crafted request sets ?category=thankyou, this forces invitation.
+  const category: Category | null = user.isAdmin
+    ? requestedCategory
+    : "invitation";
 
   // Date range resolution (applied to src_send_date)
   let startDate: string;
@@ -123,18 +129,30 @@ export async function GET(request: NextRequest) {
         AND (@category IS NULL OR ${categoryExpr} = @category)
     `;
 
-    // WHERE for the SUMMARY query — intentionally DOES NOT apply the category
-    // filter. The per-category breakdown powers the tab counts, which must
-    // stay stable as the user switches tabs; if we filtered by category here,
-    // the "전체" tab's count would collapse to just the active category.
-    const whereClauseSummary = `
-      WHERE o.src_send_date IS NOT NULL
-        AND o.src_send_date >= @startDate
-        AND o.src_send_date <  @endDateExcl
-        AND c.LOGIN_ID <> 's2_barunsoncard'
-        AND (@companySeq IS NULL OR o.company_seq = @companySeq)
-        AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
-    `;
+    // WHERE for the SUMMARY query.
+    // Admin: no category predicate, so the per-category breakdown can power
+    //   stable tab counts as the user switches tabs.
+    // Non-admin: category is locked to invitation for safety/privacy, so we
+    //   also apply it here — thankyou/goods numbers come back as 0 and the
+    //   partner only sees their 청첩장 figures.
+    const whereClauseSummary = user.isAdmin
+      ? `
+        WHERE o.src_send_date IS NOT NULL
+          AND o.src_send_date >= @startDate
+          AND o.src_send_date <  @endDateExcl
+          AND c.LOGIN_ID <> 's2_barunsoncard'
+          AND (@companySeq IS NULL OR o.company_seq = @companySeq)
+          AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
+      `
+      : `
+        WHERE o.src_send_date IS NOT NULL
+          AND o.src_send_date >= @startDate
+          AND o.src_send_date <  @endDateExcl
+          AND c.LOGIN_ID <> 's2_barunsoncard'
+          AND (@companySeq IS NULL OR o.company_seq = @companySeq)
+          AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
+          AND ${categoryExpr} = 'invitation'
+      `;
 
     // Summary (overall + per-category breakdown)
     const summaryResult = await req.query<{
