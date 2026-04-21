@@ -9,8 +9,6 @@ interface HeaderProps {
 }
 
 const NAV_ITEMS = [
-  { label: "주문관리", href: "/order" },
-  { label: "상품조회", href: "/product" },
   { label: "정산관리", href: "/settlement" },
   { label: "업체정보", href: "/partner" },
 ];
