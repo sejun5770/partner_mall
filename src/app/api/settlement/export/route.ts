@@ -9,13 +9,8 @@ import { categoryCaseSql, Category, CATEGORY_LABEL } from "@/lib/category";
 /**
  * GET /api/settlement/export
  *
- * CSV download of the current filter set (same logic as the list
- * endpoint, but unpaginated). Matches the list's item-level semantics:
- * when a category is selected, rows are (order × that category) slices
- * with the category's item sum as 결제금액; when no category, rows are
- * order-level with last_total_price.
- *
- * Encoded UTF-8 with BOM for Excel compatibility.
+ * CSV download of the current filter set (same semantics as the list
+ * endpoint). Encoded UTF-8 + BOM for Excel.
  */
 export async function GET(request: NextRequest) {
   const user = await getCurrentUser();
@@ -89,7 +84,7 @@ export async function GET(request: NextRequest) {
       o.src_send_date IS NOT NULL
         AND o.src_send_date >= @startDate
         AND o.src_send_date <  @endDateExcl
-        AND c.LOGIN_ID <> 's2_barunsoncard'
+        AND c.LOGIN_ID NOT IN ('s2_barunsoncard', 'deardeer')
         AND (@companySeq IS NULL OR o.company_seq = @companySeq)
         AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
     `;
@@ -122,20 +117,43 @@ export async function GET(request: NextRequest) {
       ) w
     `;
 
+    const orderCatsCte = `
+      order_cats AS (
+        SELECT
+          o.order_seq,
+          MAX(o.last_total_price) AS ltp,
+          SUM(CASE WHEN sc.Card_Div = 'A01' THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS inv_items,
+          SUM(CASE WHEN sc.Card_Div = 'A03' THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS tya_items,
+          SUM(CASE WHEN sc.Card_Div NOT IN ('A01','A03') THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS gds_items,
+          MAX(CASE WHEN sc.Card_Div = 'A01' THEN 1 ELSE 0 END) AS has_inv,
+          MAX(CASE WHEN sc.Card_Div = 'A03' THEN 1 ELSE 0 END) AS has_tya,
+          MAX(CASE WHEN sc.Card_Div NOT IN ('A01','A03') THEN 1 ELSE 0 END) AS has_gds
+        FROM custom_order o
+        JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
+        JOIN custom_order_item oi ON oi.order_seq = o.order_seq
+        JOIN S2_Card sc ON sc.Card_Seq = oi.card_seq
+        WHERE ${sharedFilters}
+        GROUP BY o.order_seq
+      )
+    `;
+
     let result;
     if (category) {
       result = await req.query<ExportRow>(`
-        WITH cat_slice AS (
+        WITH ${orderCatsCte},
+        cat_slice AS (
           SELECT
-            o.order_seq,
-            SUM(oi.item_sale_price * oi.item_count) AS amount
-          FROM custom_order o
-          JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
-          JOIN custom_order_item oi ON oi.order_seq = o.order_seq
-          JOIN S2_Card sc ON sc.Card_Seq = oi.card_seq
-          WHERE ${sharedFilters}
-            AND ${itemCategoryExpr} = @category
-          GROUP BY o.order_seq
+            order_seq,
+            CASE
+              WHEN @category = 'invitation' THEN ltp - tya_items - gds_items
+              WHEN @category = 'thankyou'   THEN tya_items
+              WHEN @category = 'goods'      THEN gds_items
+              ELSE 0
+            END AS payment_amount
+          FROM order_cats
+          WHERE (@category = 'invitation' AND has_inv = 1)
+             OR (@category = 'thankyou'   AND has_tya = 1)
+             OR (@category = 'goods'      AND has_gds = 1)
         )
         SELECT
           o.order_seq,
@@ -152,13 +170,13 @@ export async function GET(request: NextRequest) {
           fi.CardBrand      AS card_brand,
           fi.Card_Div       AS card_div,
           @category         AS category,
-          cs.amount         AS item_amount,
-          cs.amount         AS payment_amount
+          fi.item_sale_price AS item_amount,
+          cs.payment_amount
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN cat_slice cs ON cs.order_seq = o.order_seq
         OUTER APPLY (
-          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div
+          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, oi.item_sale_price
           FROM custom_order_item oi
           JOIN S2_Card sc ON oi.card_seq = sc.Card_Seq
           WHERE oi.order_seq = o.order_seq
@@ -185,14 +203,12 @@ export async function GET(request: NextRequest) {
           fi.CardBrand      AS card_brand,
           fi.Card_Div       AS card_div,
           ${firstItemCategoryExpr} AS category,
-          (SELECT SUM(oi.item_sale_price * oi.item_count)
-             FROM custom_order_item oi
-             WHERE oi.order_seq = o.order_seq) AS item_amount,
+          fi.item_sale_price AS item_amount,
           o.last_total_price AS payment_amount
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         OUTER APPLY (
-          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div
+          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, oi.item_sale_price
           FROM custom_order_item oi
           JOIN S2_Card sc ON oi.card_seq = sc.Card_Seq
           WHERE oi.order_seq = o.order_seq

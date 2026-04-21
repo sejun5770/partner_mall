@@ -9,36 +9,33 @@ import { categoryCaseSql, Category } from "@/lib/category";
 /**
  * GET /api/settlement
  *
- * Aggregation model (item-level throughout)
- * ----------------------------------------
- * An order with mixed items contributes its invitation items to the
- * 청첩장 category AND its goods items to 기념굿즈 AND its thankyou items
- * to 답례품 — each category's numbers are computed from the matching
- * items alone.
+ * Category revenue split (per-order):
+ *   invitation_slice = last_total_price - thankyou_items - goods_items
+ *   thankyou_slice   = thankyou_items
+ *   goods_slice      = goods_items
  *
- * - Per-category orders = COUNT(DISTINCT order_seq) of orders with at
- *   least one matching item.
- * - Per-category sales  = SUM(item_sale_price * item_count) of matching
- *   items only.
+ * This allocates all order-level fees and discounts (delivery, jebon,
+ * coupon reduce_price, etc.) to the 청첩장 category when the order has
+ * 청첩장 items — so:
+ *   - 청첩장 탭 결제금액 = last_total_price MINUS the non-invitation item
+ *     amounts (the bundled 답례품 / 기념굿즈 items are carved out).
+ *   - 답례품 탭 / 기념굿즈 탭 결제금액 = that category's own items only.
+ *   - For an order with all three categories present, the three slices
+ *     sum back to last_total_price (cleanly partitioned).
  *
- * List rows:
- * - When a category tab is active (?category=...), the list is at
- *   (order × that category) granularity: one row per order that has
- *   items in that category. 결제금액 = sum of items in that category
- *   for that order (so the 기념굿즈 tab shows 기념굿즈 revenue only,
- *   not the full order total). 주문카드/브랜드 use the first item
- *   that matches the category.
- * - When 전체 tab (?category= omitted), the list is order-level.
- *   결제금액 = last_total_price (true payment total including fees),
- *   주문카드/브랜드 = first item overall.
+ * Orders without 청첩장 items: the slice for their own category is just
+ * their items (fees in the order stay unattributed — negligible for this
+ * iteration; can be revisited if needed).
  *
- * Overall 총 결제금액 card stays at SUM(last_total_price) over distinct
- * orders.
+ * Row-level list mirrors the same model: when a category tab is active,
+ * each list row represents one (order × that category) slice; when 전체
+ * tab is active, rows are order-level with last_total_price.
  *
- * Other rules:
- * - Only 발송완료 orders (src_send_date IS NOT NULL).
- * - Excludes LOGIN_ID='s2_barunsoncard' (internal, not a partner).
- * - Non-admin partners are locked to the 청첩장 category server-side.
+ * Excluded partners (internal accounts, not resellers):
+ *   - s2_barunsoncard (바른손카드 자체)
+ *   - deardeer        (디얼디어 내부 브랜드)
+ *
+ * Non-admin partners are locked to the 청첩장 category server-side.
  */
 export async function GET(request: NextRequest) {
   const user = await getCurrentUser();
@@ -72,7 +69,7 @@ export async function GET(request: NextRequest) {
 
   const category: Category | null = user.isAdmin ? requestedCategory : "invitation";
 
-  // Date range resolution (applied to src_send_date)
+  // Date range resolution
   let startDate: string;
   let endDateExcl: string;
   if (month && /^\d{4}-\d{2}$/.test(month)) {
@@ -113,80 +110,96 @@ export async function GET(request: NextRequest) {
     const firstItemCategoryExpr = categoryCaseSql("fi.Card_Div");
     const itemCategoryExpr = categoryCaseSql("sc.Card_Div");
 
+    // Excluded partner LOGIN_IDs (internal accounts, not resellers)
     const sharedFilters = `
       o.src_send_date IS NOT NULL
         AND o.src_send_date >= @startDate
         AND o.src_send_date <  @endDateExcl
-        AND c.LOGIN_ID <> 's2_barunsoncard'
+        AND c.LOGIN_ID NOT IN ('s2_barunsoncard', 'deardeer')
         AND (@companySeq IS NULL OR o.company_seq = @companySeq)
         AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
     `;
 
-    // ─── Overall summary (order-level) ───────────────────────────────
-    // For admin w/ no category: distinct orders in the filtered window.
-    // For non-admin: restricted to orders with invitation items.
-    const whereClauseOverall = user.isAdmin
-      ? `WHERE ${sharedFilters}`
-      : `WHERE ${sharedFilters}
-           AND EXISTS (
-             SELECT 1 FROM custom_order_item oi
-             JOIN S2_Card sc ON sc.Card_Seq = oi.card_seq
-             WHERE oi.order_seq = o.order_seq
-               AND ${itemCategoryExpr} = 'invitation'
-           )`;
+    // Per-order item-category sums. Reused by summary + category-mode list.
+    const orderCatsCte = `
+      order_cats AS (
+        SELECT
+          o.order_seq,
+          MAX(o.last_total_price) AS ltp,
+          SUM(CASE WHEN sc.Card_Div = 'A01' THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS inv_items,
+          SUM(CASE WHEN sc.Card_Div = 'A03' THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS tya_items,
+          SUM(CASE WHEN sc.Card_Div NOT IN ('A01','A03') THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS gds_items,
+          MAX(CASE WHEN sc.Card_Div = 'A01' THEN 1 ELSE 0 END) AS has_inv,
+          MAX(CASE WHEN sc.Card_Div = 'A03' THEN 1 ELSE 0 END) AS has_tya,
+          MAX(CASE WHEN sc.Card_Div NOT IN ('A01','A03') THEN 1 ELSE 0 END) AS has_gds
+        FROM custom_order o
+        JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
+        JOIN custom_order_item oi ON oi.order_seq = o.order_seq
+        JOIN S2_Card sc ON sc.Card_Seq = oi.card_seq
+        WHERE ${sharedFilters}
+        GROUP BY o.order_seq
+      )
+    `;
 
+    // ─── Overall summary (order-level) ───────────────────────────────
+    // For non-admin, restrict to orders with invitation items.
+    const overallExtraFilter = user.isAdmin ? "" : "AND has_inv = 1";
     const overallResult = await req.query<{
       total_orders: number;
       total_sales: number | null;
     }>(`
+      WITH ${orderCatsCte}
       SELECT
         COUNT(*) AS total_orders,
-        COALESCE(SUM(o.last_total_price), 0) AS total_sales
-      FROM custom_order o
-      JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
-      ${whereClauseOverall}
+        COALESCE(SUM(ltp), 0) AS total_sales
+      FROM order_cats
+      WHERE 1 = 1 ${overallExtraFilter}
     `);
 
     const overall = overallResult.recordset[0];
     const totalOrders = Number(overall?.total_orders ?? 0);
     const totalSales = Number(overall?.total_sales ?? 0);
 
-    // ─── Per-category breakdown (item-level) ─────────────────────────
-    const categoryWhereForSummary = user.isAdmin ? "" : `AND ${itemCategoryExpr} = 'invitation'`;
-    const perCategoryResult = await req.query<{
-      cat: Category;
-      orders: number;
-      sales: number | null;
+    // ─── Per-category summary ────────────────────────────────────────
+    // invitation sales use the new slice formula; thankyou/goods stay
+    // at their own items (fees unattributed for orders without 청첩장).
+    const summaryResult = await req.query<{
+      inv_orders: number;
+      inv_sales: number | null;
+      tya_orders: number;
+      tya_sales: number | null;
+      gds_orders: number;
+      gds_sales: number | null;
     }>(`
+      WITH ${orderCatsCte}
       SELECT
-        ${itemCategoryExpr} AS cat,
-        COUNT(DISTINCT o.order_seq) AS orders,
-        COALESCE(SUM(oi.item_sale_price * oi.item_count), 0) AS sales
-      FROM custom_order o
-      JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
-      JOIN custom_order_item oi ON oi.order_seq = o.order_seq
-      JOIN S2_Card sc ON sc.Card_Seq = oi.card_seq
-      WHERE ${sharedFilters}
-        ${categoryWhereForSummary}
-      GROUP BY ${itemCategoryExpr}
+        SUM(CASE WHEN has_inv = 1 THEN 1 ELSE 0 END) AS inv_orders,
+        COALESCE(SUM(CASE WHEN has_inv = 1 THEN ltp - tya_items - gds_items ELSE 0 END), 0) AS inv_sales,
+        SUM(CASE WHEN has_tya = 1 THEN 1 ELSE 0 END) AS tya_orders,
+        COALESCE(SUM(tya_items), 0) AS tya_sales,
+        SUM(CASE WHEN has_gds = 1 THEN 1 ELSE 0 END) AS gds_orders,
+        COALESCE(SUM(gds_items), 0) AS gds_sales
+      FROM order_cats
+      ${user.isAdmin ? "" : "WHERE has_inv = 1"}
     `);
 
+    const s = summaryResult.recordset[0];
     const byCategory = {
-      invitation: { orders: 0, sales: 0 },
-      thankyou: { orders: 0, sales: 0 },
-      goods: { orders: 0, sales: 0 },
+      invitation: {
+        orders: Number(s?.inv_orders ?? 0),
+        sales: Number(s?.inv_sales ?? 0),
+      },
+      thankyou: {
+        orders: Number(s?.tya_orders ?? 0),
+        sales: Number(s?.tya_sales ?? 0),
+      },
+      goods: {
+        orders: Number(s?.gds_orders ?? 0),
+        sales: Number(s?.gds_sales ?? 0),
+      },
     };
-    for (const row of perCategoryResult.recordset) {
-      if (row.cat === "invitation" || row.cat === "thankyou" || row.cat === "goods") {
-        byCategory[row.cat] = {
-          orders: Number(row.orders ?? 0),
-          sales: Number(row.sales ?? 0),
-        };
-      }
-    }
 
     // ─── List ────────────────────────────────────────────────────────
-    // Two paths: category tab (per-order category slice) vs 전체 tab.
     type ListRow = {
       order_seq: number;
       company_seq: number;
@@ -217,21 +230,21 @@ export async function GET(request: NextRequest) {
 
     let listResult;
     if (category) {
-      // Category tab: one row per order, but the displayed amounts only
-      // include items in this category. The order's full card/brand is
-      // replaced by the first-in-category item's card/brand.
       listResult = await req.query<ListRow>(`
-        WITH cat_slice AS (
+        WITH ${orderCatsCte},
+        cat_slice AS (
           SELECT
-            o.order_seq,
-            SUM(oi.item_sale_price * oi.item_count) AS amount
-          FROM custom_order o
-          JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
-          JOIN custom_order_item oi ON oi.order_seq = o.order_seq
-          JOIN S2_Card sc ON sc.Card_Seq = oi.card_seq
-          WHERE ${sharedFilters}
-            AND ${itemCategoryExpr} = @category
-          GROUP BY o.order_seq
+            order_seq,
+            CASE
+              WHEN @category = 'invitation' THEN ltp - tya_items - gds_items
+              WHEN @category = 'thankyou'   THEN tya_items
+              WHEN @category = 'goods'      THEN gds_items
+              ELSE 0
+            END AS payment_amount
+          FROM order_cats
+          WHERE (@category = 'invitation' AND has_inv = 1)
+             OR (@category = 'thankyou'   AND has_tya = 1)
+             OR (@category = 'goods'      AND has_gds = 1)
         )
         SELECT
           o.order_seq,
@@ -248,13 +261,15 @@ export async function GET(request: NextRequest) {
           fi.CardBrand      AS card_brand,
           fi.Card_Div       AS card_div,
           @category         AS category,
-          cs.amount         AS item_amount,
-          cs.amount         AS payment_amount
+          fi.item_sale_price AS item_amount,
+          cs.payment_amount
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN cat_slice cs ON cs.order_seq = o.order_seq
         OUTER APPLY (
-          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div
+          -- First item in the active category. Its item_sale_price is the
+          -- per-unit 소비자가격 shown in the list row.
+          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, oi.item_sale_price
           FROM custom_order_item oi
           JOIN S2_Card sc ON oi.card_seq = sc.Card_Seq
           WHERE oi.order_seq = o.order_seq
@@ -266,11 +281,6 @@ export async function GET(request: NextRequest) {
         OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
       `);
     } else {
-      // 전체 tab: order-level. Amount = last_total_price (full payment).
-      // For non-admin the EXISTS predicate on invitation already applied
-      // via whereClauseOverall, but the list should apply it too; since
-      // non-admin always sets category="invitation", this else branch is
-      // unreachable for non-admin.
       listResult = await req.query<ListRow>(`
         SELECT
           o.order_seq,
@@ -287,14 +297,14 @@ export async function GET(request: NextRequest) {
           fi.CardBrand      AS card_brand,
           fi.Card_Div       AS card_div,
           ${firstItemCategoryExpr} AS category,
-          (SELECT SUM(oi.item_sale_price * oi.item_count)
-             FROM custom_order_item oi
-             WHERE oi.order_seq = o.order_seq) AS item_amount,
+          fi.item_sale_price AS item_amount,
           o.last_total_price AS payment_amount
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         OUTER APPLY (
-          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div
+          -- First item overall (전체 tab). Its item_sale_price is the
+          -- per-unit 소비자가격 shown in the list row.
+          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, oi.item_sale_price
           FROM custom_order_item oi
           JOIN S2_Card sc ON oi.card_seq = sc.Card_Seq
           WHERE oi.order_seq = o.order_seq
@@ -311,8 +321,6 @@ export async function GET(request: NextRequest) {
       const itemAmount = Number(r.item_amount ?? 0);
       const paymentAmount = Number(r.payment_amount ?? 0);
       const ratePct = getCommissionRate(r.company_seq);
-      // Commission uses the displayed payment amount: per-category slice
-      // in category mode, true payment total in 전체 mode.
       const commission = calcCommission(paymentAmount, ratePct);
       const couple = [r.groom_name, r.bride_name]
         .map((x) => (x ?? "").trim())
@@ -328,7 +336,7 @@ export async function GET(request: NextRequest) {
         order_name: r.order_name ?? null,
         couple: couple || null,
         wedd_name: r.wedd_name ?? null,
-        planner_name: null, // TODO: planner column not yet identified
+        planner_name: null, // TODO
         card_code: r.card_code ?? "-",
         card_brand: brandName(r.card_brand),
         card_div: r.card_div ?? null,
