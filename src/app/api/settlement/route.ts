@@ -111,11 +111,13 @@ export async function GET(request: NextRequest) {
     const itemCategoryExpr = categoryCaseSql("sc.Card_Div");
 
     // Excluded partner LOGIN_IDs (internal accounts, not resellers)
+    // 사고건(trouble_type 값이 있는 주문)은 정산 대상에서 제외.
     const sharedFilters = `
       o.src_send_date IS NOT NULL
         AND o.src_send_date >= @startDate
         AND o.src_send_date <  @endDateExcl
         AND c.LOGIN_ID NOT IN ('s2_barunsoncard', 'deardeer')
+        AND (o.trouble_type IS NULL OR LTRIM(RTRIM(o.trouble_type)) = '')
         AND (@companySeq IS NULL OR o.company_seq = @companySeq)
         AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
     `;
