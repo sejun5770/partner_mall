@@ -274,15 +274,17 @@ export async function GET(request: NextRequest) {
           fi.CardBrand      AS card_brand,
           fi.Card_Div       AS card_div,
           @category         AS category,
-          fi.item_sale_price AS item_amount,
+          fi.CardSet_Price AS item_amount,
           cs.payment_amount
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN cat_slice cs ON cs.order_seq = o.order_seq
         OUTER APPLY (
-          -- First item in the active category. Its item_sale_price is the
-          -- per-unit 소비자가격 shown in the list row.
-          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, oi.item_sale_price
+          -- First item in the active category. CardSet_Price is the master
+          -- catalog set price (소비자가), which is what the production portal
+          -- shows. item_sale_price (실제 판매가) varies per order because of
+          -- discounts and isn't what we want in the "소비자가격" column.
+          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, sc.CardSet_Price
           FROM custom_order_item oi
           JOIN S2_Card sc ON oi.card_seq = sc.Card_Seq
           WHERE oi.order_seq = o.order_seq
@@ -310,14 +312,13 @@ export async function GET(request: NextRequest) {
           fi.CardBrand      AS card_brand,
           fi.Card_Div       AS card_div,
           ${firstItemCategoryExpr} AS category,
-          fi.item_sale_price AS item_amount,
+          fi.CardSet_Price AS item_amount,
           o.last_total_price AS payment_amount
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         OUTER APPLY (
-          -- First item overall (전체 tab). Its item_sale_price is the
-          -- per-unit 소비자가격 shown in the list row.
-          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, oi.item_sale_price
+          -- First item overall (전체 tab). See comment above on CardSet_Price.
+          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, sc.CardSet_Price
           FROM custom_order_item oi
           JOIN S2_Card sc ON oi.card_seq = sc.Card_Seq
           WHERE oi.order_seq = o.order_seq

@@ -174,13 +174,13 @@ export async function GET(request: NextRequest) {
           fi.CardBrand      AS card_brand,
           fi.Card_Div       AS card_div,
           @category         AS category,
-          fi.item_sale_price AS item_amount,
+          fi.CardSet_Price AS item_amount,
           cs.payment_amount
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN cat_slice cs ON cs.order_seq = o.order_seq
         OUTER APPLY (
-          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, oi.item_sale_price
+          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, sc.CardSet_Price
           FROM custom_order_item oi
           JOIN S2_Card sc ON oi.card_seq = sc.Card_Seq
           WHERE oi.order_seq = o.order_seq
@@ -207,12 +207,12 @@ export async function GET(request: NextRequest) {
           fi.CardBrand      AS card_brand,
           fi.Card_Div       AS card_div,
           ${firstItemCategoryExpr} AS category,
-          fi.item_sale_price AS item_amount,
+          fi.CardSet_Price AS item_amount,
           o.last_total_price AS payment_amount
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         OUTER APPLY (
-          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, oi.item_sale_price
+          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, sc.CardSet_Price
           FROM custom_order_item oi
           JOIN S2_Card sc ON oi.card_seq = sc.Card_Seq
           WHERE oi.order_seq = o.order_seq
