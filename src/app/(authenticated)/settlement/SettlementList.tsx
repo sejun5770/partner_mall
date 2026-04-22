@@ -10,7 +10,10 @@ interface Settlement {
   company_seq: number;
   login_id: string;
   company_name: string;
-  order_date: string;
+  // Pre-formatted YYYY-MM-DD strings from the server so timezone shifts
+  // don't bump dates by a day in the browser.
+  order_date: string | null;
+  pay_date: string | null;
   send_date: string | null;
   order_name: string | null;
   couple: string | null;
@@ -476,9 +479,9 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                 </tr>
               ) : (
                 settlements.map((s, idx) => {
-                  const sendDateLabel = s.send_date
-                    ? new Date(s.send_date).toLocaleDateString("ko-KR")
-                    : DASH;
+                  // Dates come pre-formatted YYYY-MM-DD from the server — display as-is
+                  // to avoid JS Date timezone conversion (browser's local TZ shifted
+                  // shipments one day forward).
                   return (
                     <tr key={s.order_seq} className="hover:bg-slate-50">
                       <Td>{total - (page - 1) * pageSize - idx}</Td>
@@ -499,9 +502,9 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                           발송완료
                         </span>
                       </Td>
-                      <Td>{s.order_date ? new Date(s.order_date).toLocaleDateString("ko-KR") : DASH}</Td>
-                      <Td>{sendDateLabel}</Td>
-                      <Td>{sendDateLabel}</Td>
+                      <Td>{s.order_date || DASH}</Td>
+                      <Td>{s.pay_date || DASH}</Td>
+                      <Td>{s.send_date || DASH}</Td>
                       <Td>{s.order_name || DASH}</Td>
                       <Td>{s.couple || DASH}</Td>
                       <Td>{s.wedd_name || DASH}</Td>

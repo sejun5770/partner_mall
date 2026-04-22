@@ -94,8 +94,9 @@ export async function GET(request: NextRequest) {
       company_seq: number;
       login_id: string;
       company_name: string;
-      order_date: Date;
-      src_send_date: Date;
+      // Pre-formatted YYYY-MM-DD strings to avoid timezone drift.
+      order_date_str: string | null;
+      send_date_str: string | null;
       order_name: string | null;
       groom_name: string | null;
       bride_name: string | null;
@@ -160,8 +161,8 @@ export async function GET(request: NextRequest) {
           c.COMPANY_SEQ     AS company_seq,
           c.LOGIN_ID        AS login_id,
           c.COMPANY_NAME    AS company_name,
-          o.order_date,
-          o.src_send_date,
+          CONVERT(VARCHAR(10), o.order_date, 23)    AS order_date_str,
+          CONVERT(VARCHAR(10), o.src_send_date, 23) AS send_date_str,
           o.order_name,
           w.groom_name,
           w.bride_name,
@@ -193,8 +194,8 @@ export async function GET(request: NextRequest) {
           c.COMPANY_SEQ     AS company_seq,
           c.LOGIN_ID        AS login_id,
           c.COMPANY_NAME    AS company_name,
-          o.order_date,
-          o.src_send_date,
+          CONVERT(VARCHAR(10), o.order_date, 23)    AS order_date_str,
+          CONVERT(VARCHAR(10), o.src_send_date, 23) AS send_date_str,
           o.order_name,
           w.groom_name,
           w.bride_name,
@@ -250,12 +251,8 @@ export async function GET(request: NextRequest) {
         .map((x) => (x ?? "").trim())
         .filter(Boolean)
         .join(",");
-      const sendDate = r.src_send_date
-        ? new Date(r.src_send_date).toLocaleDateString("ko-KR")
-        : "";
-      const orderDate = r.order_date
-        ? new Date(r.order_date).toLocaleDateString("ko-KR")
-        : "";
+      const orderDate = r.order_date_str ?? "";
+      const sendDate = r.send_date_str ?? "";
 
       return [
         ...(user.isAdmin ? [r.login_id, r.company_name] : []),
@@ -263,7 +260,8 @@ export async function GET(request: NextRequest) {
         ...(user.isAdmin ? [CATEGORY_LABEL[r.category] ?? ""] : []),
         "발송완료",
         orderDate,
-        sendDate,
+        // 결제일 mirrors 주문일 (partner orders = instant PG settlement)
+        orderDate,
         sendDate,
         r.order_name ?? "",
         couple,

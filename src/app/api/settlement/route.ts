@@ -205,8 +205,12 @@ export async function GET(request: NextRequest) {
       company_seq: number;
       login_id: string;
       company_name: string;
-      order_date: Date;
-      src_send_date: Date;
+      // SQL pre-formats dates as YYYY-MM-DD strings (CONVERT(VARCHAR(10), ..., 23))
+      // to dodge a timezone shift. mssql returns DATETIME as UTC-assumed Date;
+      // the browser then re-converts to KST adding +9h, which crosses midnight
+      // and shows shipments from 2026-04-21 16:58 as "2026-04-22".
+      order_date_str: string | null;
+      send_date_str: string | null;
       order_name: string | null;
       groom_name: string | null;
       bride_name: string | null;
@@ -251,8 +255,8 @@ export async function GET(request: NextRequest) {
           c.COMPANY_SEQ     AS company_seq,
           c.LOGIN_ID        AS login_id,
           c.COMPANY_NAME    AS company_name,
-          o.order_date,
-          o.src_send_date,
+          CONVERT(VARCHAR(10), o.order_date, 23)    AS order_date_str,
+          CONVERT(VARCHAR(10), o.src_send_date, 23) AS send_date_str,
           o.order_name,
           w.groom_name,
           w.bride_name,
@@ -287,8 +291,8 @@ export async function GET(request: NextRequest) {
           c.COMPANY_SEQ     AS company_seq,
           c.LOGIN_ID        AS login_id,
           c.COMPANY_NAME    AS company_name,
-          o.order_date,
-          o.src_send_date,
+          CONVERT(VARCHAR(10), o.order_date, 23)    AS order_date_str,
+          CONVERT(VARCHAR(10), o.src_send_date, 23) AS send_date_str,
           o.order_name,
           w.groom_name,
           w.bride_name,
@@ -331,8 +335,12 @@ export async function GET(request: NextRequest) {
         company_seq: r.company_seq,
         login_id: r.login_id,
         company_name: r.company_name,
-        order_date: r.order_date,
-        send_date: r.src_send_date,
+        // 주문일 + 결제일 share order_date (partner orders use instant PG,
+        // so payment date = order date — matches the original portal).
+        // 배송일 uses src_send_date.
+        order_date: r.order_date_str,
+        pay_date: r.order_date_str,
+        send_date: r.send_date_str,
         order_name: r.order_name ?? null,
         couple: couple || null,
         wedd_name: r.wedd_name ?? null,
