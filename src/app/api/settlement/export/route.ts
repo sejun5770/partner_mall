@@ -80,13 +80,12 @@ export async function GET(request: NextRequest) {
     const firstItemCategoryExpr = categoryCaseSql("fi.Card_Div");
     const itemCategoryExpr = categoryCaseSql("sc.Card_Div");
 
-    // 사고건(trouble_type 값이 있는 주문)은 정산 대상에서 제외.
+    // 사고건 제외는 잠정 보류 (see /api/settlement/route.ts note).
     const sharedFilters = `
       o.src_send_date IS NOT NULL
         AND o.src_send_date >= @startDate
         AND o.src_send_date <  @endDateExcl
         AND c.LOGIN_ID NOT IN ('s2_barunsoncard', 'deardeer')
-        AND (o.trouble_type IS NULL OR LTRIM(RTRIM(o.trouble_type)) = '')
         AND (@companySeq IS NULL OR o.company_seq = @companySeq)
         AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
     `;

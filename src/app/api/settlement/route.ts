@@ -110,14 +110,18 @@ export async function GET(request: NextRequest) {
     const firstItemCategoryExpr = categoryCaseSql("fi.Card_Div");
     const itemCategoryExpr = categoryCaseSql("sc.Card_Div");
 
-    // Excluded partner LOGIN_IDs (internal accounts, not resellers)
-    // 사고건(trouble_type 값이 있는 주문)은 정산 대상에서 제외.
+    // Excluded partner LOGIN_IDs (internal accounts, not resellers).
+    //
+    // 사고건 제외는 잠정 보류: trouble_type 컬럼의 값 분포를 확인하기 전에
+    // `IS NULL OR empty` 필터를 넣었더니 전체 건이 0이 되었음 (정상 주문에도
+    // 'N' 같은 기본값이 들어있는 것으로 보임). DB 접속 복구 후 DISTINCT
+    // trouble_type 값을 확인해 정확히 어떤 코드가 "사고건"인지 정한 뒤,
+    // `o.trouble_type NOT IN (...사고코드들...)` 로 좁혀서 다시 적용할 예정.
     const sharedFilters = `
       o.src_send_date IS NOT NULL
         AND o.src_send_date >= @startDate
         AND o.src_send_date <  @endDateExcl
         AND c.LOGIN_ID NOT IN ('s2_barunsoncard', 'deardeer')
-        AND (o.trouble_type IS NULL OR LTRIM(RTRIM(o.trouble_type)) = '')
         AND (@companySeq IS NULL OR o.company_seq = @companySeq)
         AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
     `;
