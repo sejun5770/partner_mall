@@ -1,0 +1,73 @@
+// Internal Prisma + SQLite store for partner-mall app-level data.
+//
+// The production partner/order system lives in bar_shop1 (MSSQL), which we
+// currently access with a read-only account. To support workflows that need
+// writes (e.g. partner onboarding requests) without touching bar_shop1
+// directly, we keep a local SQLite DB alongside the app.
+//
+// The Docker image auto-runs `prisma db push` at container start (see
+// Dockerfile CMD), so adding / changing models here reflects into the
+// deployed SQLite on next deploy without any extra ops step. DATABASE_URL
+// defaults to file:/app/data/database.db inside the container.
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+/// Queue of partner-creation requests filed from the admin UI.
+///
+/// Flow:
+///   PENDING  -- admin submits the form
+///   APPROVED -- admin reviews, marks ready to push upstream
+///   APPLIED  -- actually synced to bar_shop1.COMPANY (appliedCompanySeq set)
+///   REJECTED -- admin declines (rejectedReason set)
+///
+/// The APPROVED -> APPLIED transition is the point that needs a write-
+/// capable bar_shop1 account. Until one is provisioned, APPROVED rows
+/// accumulate as a to-do list the ops team can act on manually, and the
+/// admin UI then moves them to APPLIED with the resulting COMPANY_SEQ.
+model PartnerCreationRequest {
+  id String @id @default(cuid())
+
+  // Fields that will land on bar_shop1.COMPANY at apply time.
+  loginId        String @unique
+  companyName    String
+  email          String?
+  phone          String?
+  salesGubun     String?
+  commissionRate Int? // percent 0-100; null = use DEFAULT_COMMISSION_RATE
+
+  // Password stored plain for now: bar_shop1.COMPANY.PASSWD itself is
+  // plaintext, so any hashing we do here becomes non-syncable to the
+  // upstream system. Revisit as part of the password-hash migration.
+  passwordPlain String
+
+  // Workflow state
+  status         RequestStatus @default(PENDING)
+  notes          String? // admin memo
+  rejectedReason String?
+
+  // Audit
+  createdByLoginId  String
+  reviewedByLoginId String?
+  reviewedAt        DateTime?
+  appliedCompanySeq Int? // set once pushed to bar_shop1.COMPANY
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([createdByLoginId])
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  APPLIED
+  REJECTED
+}
