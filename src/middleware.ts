@@ -16,12 +16,10 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Bypass auth by default; only enforce it when DEV_AUTH_BYPASS is
-  // explicitly set to "0". The deployed container was not picking up the
-  // ENV set in the Dockerfile, so the safer default is "bypass on" until
-  // real auth is wired up end-to-end. Keep in sync with getCurrentUser()
-  // in src/lib/auth.ts.
-  if (process.env.DEV_AUTH_BYPASS !== "0") {
+  // Real login is enforced by default; bypass only applies when
+  // DEV_AUTH_BYPASS=1 is explicitly set (local dev, or an opt-in container
+  // env var). Keep in sync with getCurrentUser() in src/lib/auth.ts.
+  if (process.env.DEV_AUTH_BYPASS === "1") {
     return NextResponse.next();
   }
 

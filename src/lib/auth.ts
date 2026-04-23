@@ -72,8 +72,13 @@ const BYPASS_PARTNER_USER: PartnerUser = {
 /** Cookie used by the dev "view as" toggle (see /dev/view-as/[role]). */
 const DEV_VIEW_AS_COOKIE = "dev_view_as";
 
+/**
+ * Auth bypass is OFF by default in production — real login against
+ * bar_shop1.COMPANY is required. Set DEV_AUTH_BYPASS=1 in the container env
+ * (or .env.local for local dev) to re-enable the BYPASS_* fixtures.
+ */
 function isBypassEnabled(): boolean {
-  return process.env.DEV_AUTH_BYPASS !== "0";
+  return process.env.DEV_AUTH_BYPASS === "1";
 }
 
 /**
