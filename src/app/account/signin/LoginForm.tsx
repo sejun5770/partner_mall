@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useRef, FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 export default function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [idFocused, setIdFocused] = useState(false);
   const [pwFocused, setPwFocused] = useState(false);
   const [error, setError] = useState("");
@@ -32,7 +33,11 @@ export default function LoginForm() {
       });
 
       if (res.ok) {
-        router.push("/");
+        // Honor ?ReturnUrl= set by the middleware rewrite so the user lands
+        // back on the page they originally requested (falls through to
+        // /dashboard — the app's default landing — otherwise).
+        const returnUrl = searchParams?.get("ReturnUrl") || "/dashboard";
+        router.push(returnUrl.startsWith("/") ? returnUrl : "/dashboard");
       } else {
         const data = await res.json();
         setError(data.message || "로그인에 실패했습니다.");

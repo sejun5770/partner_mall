@@ -23,17 +23,21 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Redirect to login if no token.
-  // Use request.nextUrl.clone() (NextURL) rather than `new URL(..., request.url)`
-  // so that basePath is preserved when the redirect URL is emitted. Without this,
-  // the browser is sent to "/account/signin" (no basePath) which the upstream
-  // reverse proxy does not route to this container and can loop.
+  // Unauthenticated: render the signin page via REWRITE instead of 307.
+  //
+  // The upstream reverse proxy (docker-manager.barunsoncard.com) has been
+  // observed stripping the `Location` header from 307 responses — the
+  // browser then sees a 200 with an empty body and shows a blank page.
+  // Using rewrite keeps the user's URL in the address bar but serves the
+  // signin page's HTML inline, sidestepping the Location-strip bug.
+  // ReturnUrl is still propagated so the signin form can send the user
+  // back to their original destination after login.
   if (!token) {
-    const loginUrl = request.nextUrl.clone();
-    loginUrl.pathname = "/account/signin";
-    loginUrl.search = "";
-    loginUrl.searchParams.set("ReturnUrl", pathname);
-    return NextResponse.redirect(loginUrl);
+    const target = request.nextUrl.clone();
+    target.pathname = "/account/signin";
+    target.search = "";
+    target.searchParams.set("ReturnUrl", pathname);
+    return NextResponse.rewrite(target);
   }
 
   return NextResponse.next();
@@ -41,6 +45,11 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico).*)",
+    // Explicit root so the auth rewrite fires on /c/partner/ (the index
+    // page). Without this the matcher's `.*` only reliably matches
+    // non-empty path segments in some Next versions and the root slipped
+    // through, serving a blank body.
+    "/",
+    "/((?!_next/static|_next/image|favicon.ico).+)",
   ],
 };

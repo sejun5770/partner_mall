@@ -4,6 +4,12 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
+// Prevent static prerendering so the middleware rewrite (which turns the
+// unauth root path into /account/signin) actually runs for every request.
+// Without this, Next.js would cache the initial client shell and the
+// middleware would not get a chance to redirect unauth users.
+export const dynamic = "force-dynamic";
+
 /**
  * Root page (`/` or `${basePath}/`).
  *

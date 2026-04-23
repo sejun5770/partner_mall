@@ -1,10 +1,14 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import LoginForm from "./LoginForm";
 
 export const metadata: Metadata = {
   title: "바른손몰 B2B 지원 시스템 - 로그인",
 };
 
+// LoginForm reads useSearchParams() to honor ReturnUrl set by the middleware
+// rewrite. That hook forces client-side rendering, so wrap in Suspense to
+// satisfy Next's build-time CSR-bailout check.
 export default function SignInPage() {
   return (
     <>
@@ -17,7 +21,9 @@ export default function SignInPage() {
                   <h2>바른손몰 B2B 지원시스템</h2>
                   <p>바른손몰 제휴 아이디로 로그인 해주세요.</p>
                 </div>
-                <LoginForm />
+                <Suspense fallback={null}>
+                  <LoginForm />
+                </Suspense>
               </div>
             </div>
           </div>
