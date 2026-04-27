@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local prisma SQLite dev DB (legacy from a reverted feature; keep ignored
+# in case an old checkout still has the file)
+/prisma/*.db
+/prisma/*.db-journal
