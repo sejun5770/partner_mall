@@ -128,8 +128,14 @@ export async function GET(request: NextRequest) {
     // known 사고건 order 4733285 carries trouble_type='3601'. So keep only
     // trouble_type='0' for settlement. If a new non-incident code surfaces
     // later it can be added to the allow list.
+    // Cancelled orders (src_cancel_date IS NOT NULL) are net-refunded by
+    // the PG, so they should not show up in settlement. The production
+    // portal's PG aggregate already nets them out — including this filter
+    // both removes a real correctness bug and tightens the reconciliation
+    // gap with the legacy report.
     const sharedFilters = `
       o.src_send_date IS NOT NULL
+        AND o.src_cancel_date IS NULL
         AND ${dateColumn} >= @startDate
         AND ${dateColumn} <  @endDateExcl
         AND c.LOGIN_ID NOT IN ('s2_barunsoncard', 'deardeer')

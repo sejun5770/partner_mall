@@ -16,10 +16,13 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Real login is enforced by default; bypass only applies when
-  // DEV_AUTH_BYPASS=1 is explicitly set (local dev, or an opt-in container
-  // env var). Keep in sync with getCurrentUser() in src/lib/auth.ts.
-  if (process.env.DEV_AUTH_BYPASS === "1") {
+  // Real login is enforced. Bypass only kicks in for non-production builds
+  // with DEV_AUTH_BYPASS=1 — a partner-facing container ignores the env
+  // var entirely. Keep in sync with isBypassEnabled() in src/lib/auth.ts.
+  if (
+    process.env.NODE_ENV !== "production" &&
+    process.env.DEV_AUTH_BYPASS === "1"
+  ) {
     return NextResponse.next();
   }
 

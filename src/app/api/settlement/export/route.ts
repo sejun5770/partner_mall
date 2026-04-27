@@ -87,8 +87,10 @@ export async function GET(request: NextRequest) {
 
     // trouble_type='0' only — non-'0' codes are incidents (see
     // /api/settlement/route.ts for the rationale).
+    // Mirrors the list endpoint — cancelled orders excluded.
     const sharedFilters = `
       o.src_send_date IS NOT NULL
+        AND o.src_cancel_date IS NULL
         AND ${dateColumn} >= @startDate
         AND ${dateColumn} <  @endDateExcl
         AND c.LOGIN_ID NOT IN ('s2_barunsoncard', 'deardeer')

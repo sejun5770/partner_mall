@@ -2,7 +2,27 @@ import jwt from "jsonwebtoken";
 import { cookies } from "next/headers";
 import { getMssqlPool } from "@/lib/db";
 
-const JWT_SECRET = process.env.JWT_SECRET || "partner-mall-jwt-secret";
+/**
+ * JWT signing secret. In production we hard-fail at module load if the env
+ * var is missing or still set to the publicly-visible default — otherwise
+ * an attacker could forge admin tokens. In dev / non-prod we fall back to
+ * a clearly marked dummy so local boots stay friction-free.
+ */
+const JWT_SECRET = (() => {
+  const v = process.env.JWT_SECRET;
+  const isProd = process.env.NODE_ENV === "production";
+  if (!v || v === "partner-mall-jwt-secret" || v === "partner-mall-jwt-secret-change-this") {
+    if (isProd) {
+      throw new Error(
+        "JWT_SECRET environment variable must be set to a strong random value " +
+          "in production. Configure it via docker-manager env vars before redeploy."
+      );
+    }
+    return "partner-mall-jwt-secret-DEV-ONLY";
+  }
+  return v;
+})();
+
 const TOKEN_NAME = "partner_token";
 
 export interface PartnerUser {
@@ -102,11 +122,13 @@ const BYPASS_PARTNER_USER: PartnerUser = {
 const DEV_VIEW_AS_COOKIE = "dev_view_as";
 
 /**
- * Auth bypass is OFF by default in production — real login against
- * bar_shop1.COMPANY is required. Set DEV_AUTH_BYPASS=1 in the container env
- * (or .env.local for local dev) to re-enable the BYPASS_* fixtures.
+ * Auth bypass. Hard-disabled when NODE_ENV === "production", regardless of
+ * the env var — a partner-facing build must never accept the BYPASS_USER
+ * fallback even if someone toggles DEV_AUTH_BYPASS in docker-manager by
+ * mistake. In dev / non-prod, opt in with DEV_AUTH_BYPASS=1.
  */
 function isBypassEnabled(): boolean {
+  if (process.env.NODE_ENV === "production") return false;
   return process.env.DEV_AUTH_BYPASS === "1";
 }
 

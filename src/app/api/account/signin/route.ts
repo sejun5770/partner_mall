@@ -32,6 +32,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Only active accounts may sign in. STATUS distribution in the live DB:
+    //   S2 = 활성 (login allowed)
+    //   S1 = 대기, S3 = 비활성, '' / NULL = 정의되지 않음 (login refused)
+    if (user.STATUS !== "S2") {
+      return NextResponse.json(
+        { message: "비활성 계정입니다. 관리자에게 문의해주세요." },
+        { status: 403 }
+      );
+    }
+
     const isAdmin = await isAdminLoginId(user.LOGIN_ID);
     const token = signToken({
       id: user.COMPANY_SEQ,
