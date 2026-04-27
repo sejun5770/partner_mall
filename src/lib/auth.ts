@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import { cookies } from "next/headers";
+import { getMssqlPool } from "@/lib/db";
 
 const JWT_SECRET = process.env.JWT_SECRET || "partner-mall-jwt-secret";
 const TOKEN_NAME = "partner_token";
@@ -14,17 +15,45 @@ export interface PartnerUser {
 }
 
 /**
- * Env-based admin check. Replace with a COMPANY table column lookup
- * once the actual admin flag column in bar_shop1.COMPANY is confirmed.
- * ADMIN_LOGIN_IDS is a comma-separated list of LOGIN_IDs.
+ * DB-backed admin check, called at sign-in time. Two signals are checked:
+ *
+ *   1. The user has an active row in `ADMIN_LST` whose ADMIN_ID matches
+ *      their COMPANY.LOGIN_ID. ADMIN_LST is the bar_shop1 staff table —
+ *      anyone there is a 바른손 직원.
+ *   2. Their COMPANY.COMPANY_NAME contains "관리자". This catches the
+ *      service-level admin accounts that aren't bar_shop1 employees but
+ *      are explicitly named as admins (e.g. ec_master / 바른손몰관리자).
+ *
+ * Either match flips isAdmin=true. The result is baked into the JWT at
+ * login, so this check only runs once per session.
  */
-export function isAdminLoginId(loginId: string): boolean {
-  const raw = process.env.ADMIN_LOGIN_IDS || "";
-  return raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .includes(loginId);
+export async function isAdminLoginId(loginId: string): Promise<boolean> {
+  if (!loginId) return false;
+  try {
+    const pool = await getMssqlPool();
+    const result = await pool
+      .request()
+      .input("loginId", loginId)
+      .query<{ is_admin: number }>(`
+        SELECT TOP 1
+          CASE
+            WHEN c.COMPANY_NAME LIKE N'%관리자%' THEN 1
+            WHEN EXISTS (
+              SELECT 1 FROM ADMIN_LST a
+              WHERE a.ADMIN_ID = c.LOGIN_ID AND a.NState = 1
+            ) THEN 1
+            ELSE 0
+          END AS is_admin
+        FROM COMPANY c
+        WHERE c.LOGIN_ID = @loginId
+      `);
+    return Number(result.recordset[0]?.is_admin ?? 0) === 1;
+  } catch (err) {
+    // On any failure we err on the safe side and treat the user as
+    // non-admin, never the other way around.
+    console.error("isAdminLoginId DB check failed:", err);
+    return false;
+  }
 }
 
 export function signToken(user: PartnerUser): string {

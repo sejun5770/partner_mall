@@ -1,13 +1,16 @@
 /**
  * Order item category derived from S2_Card.Card_Div.
  *
- * Mapping (per business spec):
- *   invitation = A01 (일반청첩장)
- *   thankyou   = A03 (감사장, 카드형답례 등)
- *   goods      = 그 외 모든 Card_Div (B01 포토북/앨범, 봉투, 스티커, 식권/부속, C01~C29 등)
+ * Business rules (live DB inspection 2026-04-23):
+ *   thankyou   = D01           — 답례품 (e.g. 데일리너츠 선물세트, 메탈릭 코스터)
+ *   goods      = D02           — 기념굿즈 / 데코소품 (꽃다발 · 유칼립투스 등)
+ *   invitation = everything else — 청첩장 본체(A01) + 추가상품
+ *                                   (A02-A07 봉투/감사장/스티커/식권/네임씰/포켓,
+ *                                    B01-B02 봉투·라이닝, C01-C29 식권/혼인서약서/
+ *                                    엽서/봉투류/리플렛/사은품 등)
  *
- * If Card_Div is NULL (no items matched), the order is classified as "goods" as
- * a safe default — it will not appear in invitation/thankyou filtered views.
+ * Per spec: "청첩장 = 청첩장 + 추가상품 (답례품 / 데코소품 카테고리는 제외)" —
+ * so the invitation bucket is the default and only D01/D02 are carved out.
  */
 export type Category = "invitation" | "thankyou" | "goods";
 
@@ -19,9 +22,9 @@ export const CATEGORY_LABEL: Record<Category, string> = {
 
 export function classifyCardDiv(cardDiv: string | null | undefined): Category {
   const v = (cardDiv ?? "").trim().toUpperCase();
-  if (v === "A01") return "invitation";
-  if (v === "A03") return "thankyou";
-  return "goods";
+  if (v === "D01") return "thankyou";
+  if (v === "D02") return "goods";
+  return "invitation";
 }
 
 /**
@@ -30,8 +33,8 @@ export function classifyCardDiv(cardDiv: string | null | undefined): Category {
  */
 export function categoryCaseSql(cardDivExpr: string): string {
   return `CASE
-    WHEN ${cardDivExpr} = 'A01' THEN 'invitation'
-    WHEN ${cardDivExpr} = 'A03' THEN 'thankyou'
-    ELSE 'goods'
+    WHEN ${cardDivExpr} = 'D01' THEN 'thankyou'
+    WHEN ${cardDivExpr} = 'D02' THEN 'goods'
+    ELSE 'invitation'
   END`;
 }

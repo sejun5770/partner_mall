@@ -32,13 +32,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const isAdmin = await isAdminLoginId(user.LOGIN_ID);
     const token = signToken({
       id: user.COMPANY_SEQ,
       userId: user.LOGIN_ID,
       email: user.E_MAIL ?? "",
       partnerShopId: user.COMPANY_SEQ,
       partnerName: user.COMPANY_NAME ?? "",
-      isAdmin: isAdminLoginId(user.LOGIN_ID),
+      isAdmin,
     });
 
     const response = NextResponse.json({ success: true });
