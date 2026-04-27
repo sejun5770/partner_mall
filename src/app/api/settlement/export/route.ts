@@ -77,8 +77,8 @@ export async function GET(request: NextRequest) {
       .input("partnerNameLike", sql.NVarChar, partnerNameLike)
       .input("category", sql.VarChar, category);
 
-    const firstItemCategoryExpr = categoryCaseSql("fi.Card_Div");
-    const itemCategoryExpr = categoryCaseSql("sc.Card_Div");
+    const firstItemCategoryExpr = categoryCaseSql("fi.Card_Div", "fi.Card_Code");
+    const itemCategoryExpr = categoryCaseSql("sc.Card_Div", "sc.Card_Code");
 
     // trouble_type='0' only — non-'0' codes are incidents (see
     // /api/settlement/route.ts for the rationale).
@@ -126,12 +126,12 @@ export async function GET(request: NextRequest) {
         SELECT
           o.order_seq,
           MAX(o.last_total_price) AS ltp,
-          SUM(CASE WHEN sc.Card_Div NOT IN ('D01','D02') THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS inv_items,
-          SUM(CASE WHEN sc.Card_Div = 'D01' THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS tya_items,
-          SUM(CASE WHEN sc.Card_Div = 'D02' THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS gds_items,
-          MAX(CASE WHEN sc.Card_Div NOT IN ('D01','D02') THEN 1 ELSE 0 END) AS has_inv,
-          MAX(CASE WHEN sc.Card_Div = 'D01' THEN 1 ELSE 0 END) AS has_tya,
-          MAX(CASE WHEN sc.Card_Div = 'D02' THEN 1 ELSE 0 END) AS has_gds
+          SUM(CASE WHEN ${itemCategoryExpr} = 'invitation' THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS inv_items,
+          SUM(CASE WHEN ${itemCategoryExpr} = 'thankyou'   THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS tya_items,
+          SUM(CASE WHEN ${itemCategoryExpr} = 'goods'      THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS gds_items,
+          MAX(CASE WHEN ${itemCategoryExpr} = 'invitation' THEN 1 ELSE 0 END) AS has_inv,
+          MAX(CASE WHEN ${itemCategoryExpr} = 'thankyou'   THEN 1 ELSE 0 END) AS has_tya,
+          MAX(CASE WHEN ${itemCategoryExpr} = 'goods'      THEN 1 ELSE 0 END) AS has_gds
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN custom_order_item oi ON oi.order_seq = o.order_seq

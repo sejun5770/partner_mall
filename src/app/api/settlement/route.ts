@@ -107,8 +107,8 @@ export async function GET(request: NextRequest) {
       .input("offset", sql.Int, (page - 1) * pageSize)
       .input("pageSize", sql.Int, pageSize);
 
-    const firstItemCategoryExpr = categoryCaseSql("fi.Card_Div");
-    const itemCategoryExpr = categoryCaseSql("sc.Card_Div");
+    const firstItemCategoryExpr = categoryCaseSql("fi.Card_Div", "fi.Card_Code");
+    const itemCategoryExpr = categoryCaseSql("sc.Card_Div", "sc.Card_Code");
 
     // Excluded partner LOGIN_IDs (internal accounts, not resellers).
     //
@@ -129,20 +129,21 @@ export async function GET(request: NextRequest) {
         AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
     `;
 
-    // Per-order item-category sums. Reused by summary + category-mode list.
-    // Category buckets (see lib/category.ts):
-    //   thankyou (D01) / goods (D02) / invitation (everything else, default).
+    // Per-order item-category sums. Uses categoryCaseSql so any change to
+    // the goods / thankyou / invitation rule (lib/category.ts) is honored
+    // in both directions: categorisation here matches what the list query
+    // displays in the "분류" column.
     const orderCatsCte = `
       order_cats AS (
         SELECT
           o.order_seq,
           MAX(o.last_total_price) AS ltp,
-          SUM(CASE WHEN sc.Card_Div NOT IN ('D01','D02') THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS inv_items,
-          SUM(CASE WHEN sc.Card_Div = 'D01' THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS tya_items,
-          SUM(CASE WHEN sc.Card_Div = 'D02' THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS gds_items,
-          MAX(CASE WHEN sc.Card_Div NOT IN ('D01','D02') THEN 1 ELSE 0 END) AS has_inv,
-          MAX(CASE WHEN sc.Card_Div = 'D01' THEN 1 ELSE 0 END) AS has_tya,
-          MAX(CASE WHEN sc.Card_Div = 'D02' THEN 1 ELSE 0 END) AS has_gds
+          SUM(CASE WHEN ${itemCategoryExpr} = 'invitation' THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS inv_items,
+          SUM(CASE WHEN ${itemCategoryExpr} = 'thankyou'   THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS tya_items,
+          SUM(CASE WHEN ${itemCategoryExpr} = 'goods'      THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS gds_items,
+          MAX(CASE WHEN ${itemCategoryExpr} = 'invitation' THEN 1 ELSE 0 END) AS has_inv,
+          MAX(CASE WHEN ${itemCategoryExpr} = 'thankyou'   THEN 1 ELSE 0 END) AS has_tya,
+          MAX(CASE WHEN ${itemCategoryExpr} = 'goods'      THEN 1 ELSE 0 END) AS has_gds
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN custom_order_item oi ON oi.order_seq = o.order_seq
