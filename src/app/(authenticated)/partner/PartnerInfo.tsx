@@ -149,7 +149,7 @@ export default function PartnerInfo() {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-100">
       <h2 className="mb-4 text-sm font-semibold text-slate-700">{title}</h2>
       {children}
     </section>

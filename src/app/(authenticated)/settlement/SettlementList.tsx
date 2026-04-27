@@ -69,10 +69,13 @@ function fmtMonth(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
+// Category badges. Three distinct cool/warm tones so they don't collide with
+// emerald (the app's primary action color used for the 발송완료 status pill
+// and the main CTA gradient).
 const CATEGORY_BADGE_CLASS: Record<Category, string> = {
-  invitation: "bg-indigo-100 text-indigo-800",
-  thankyou: "bg-emerald-100 text-emerald-800",
-  goods: "bg-amber-100 text-amber-800",
+  invitation: "bg-sky-50 text-sky-700 ring-1 ring-sky-200",
+  thankyou: "bg-rose-50 text-rose-700 ring-1 ring-rose-200",
+  goods: "bg-amber-50 text-amber-700 ring-1 ring-amber-200",
 };
 
 export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
@@ -226,7 +229,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
   return (
     <div className="space-y-6">
       {/* Filter */}
-      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-100">
         <form onSubmit={handleSearch} className="space-y-4">
           {isAdmin && (
             <div className="flex items-center gap-3">
@@ -359,14 +362,14 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
           <div className="flex gap-2 pt-2">
             <button
               type="submit"
-              className="h-9 rounded bg-indigo-600 px-4 text-sm font-semibold text-white hover:bg-indigo-700"
+              className="h-10 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 px-5 text-sm font-semibold text-white shadow-md shadow-emerald-500/20 transition-all hover:from-emerald-600 hover:to-teal-600 hover:shadow-lg hover:shadow-emerald-500/30"
             >
               검색
             </button>
             <button
               type="button"
               onClick={handleReset}
-              className="h-9 rounded border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              className="h-10 rounded-xl border border-slate-200 bg-white px-5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
             >
               초기화
             </button>
@@ -405,7 +408,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
       {summary && (
         <section className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <SummaryCard label="총 주문건수" value={`${summary.total_orders.toLocaleString()} 건`} />
-          <SummaryCard label="총 결제금액" value={`${summary.total_sales.toLocaleString()} 원`} />
+          <SummaryCard label="총 결제금액" value={`${summary.total_sales.toLocaleString()} 원`} tone="positive" />
           <SummaryCard
             label="총 지급 수수료"
             value={`${summary.total_commission_paid.toLocaleString()} 원`}
@@ -415,7 +418,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
       )}
 
       {/* List */}
-      <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+      <section className="rounded-2xl bg-white ring-1 ring-slate-100 shadow-sm">
         {/* Category tabs — admin only. Non-admin partners are restricted to
             the 청첩장 category on the server side as well. */}
         {isAdmin && (
@@ -433,9 +436,9 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                     setPage(1);
                   }}
                   className={
-                    "-mb-px rounded-t border border-b-0 px-4 py-2 text-sm font-medium " +
+                    "-mb-px rounded-t-lg border border-b-0 px-4 py-2 text-sm font-medium transition-colors " +
                     (active
-                      ? "border-slate-200 bg-white text-indigo-700"
+                      ? "border-slate-200 bg-white text-slate-900 shadow-[inset_0_-2px_0_0_theme(colors.emerald.500)]"
                       : "border-transparent text-slate-500 hover:text-slate-800")
                   }
                 >
@@ -532,7 +535,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                         <button
                           type="button"
                           onClick={() => setOpenOrderSeq(s.order_seq)}
-                          className="font-medium text-indigo-600 underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-300 rounded"
+                          className="rounded font-medium text-emerald-700 underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-emerald-300"
                         >
                           {s.order_seq}
                         </button>
@@ -547,7 +550,8 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                         </Td>
                       )}
                       <Td>
-                        <span className="inline-block rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-medium text-indigo-800">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+                          <span aria-hidden className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
                           발송완료
                         </span>
                       </Td>
@@ -601,9 +605,9 @@ function SummaryCard({
   tone?: "positive" | "negative";
 }) {
   const valueColor =
-    tone === "negative" ? "text-rose-600" : tone === "positive" ? "text-indigo-700" : "text-slate-900";
+    tone === "negative" ? "text-rose-600" : tone === "positive" ? "text-emerald-700" : "text-slate-900";
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="rounded-2xl bg-white ring-1 ring-slate-100 p-4 shadow-sm">
       <div className="text-xs font-medium text-slate-500">{label}</div>
       <div className={`mt-1 text-xl font-bold ${valueColor}`}>{value}</div>
     </div>
@@ -622,13 +626,13 @@ function CategoryCard({
   tone: Category;
 }) {
   const accent: Record<Category, string> = {
-    invitation: "border-l-indigo-500",
-    thankyou: "border-l-emerald-500",
+    invitation: "border-l-sky-500",
+    thankyou: "border-l-rose-500",
     goods: "border-l-amber-500",
   };
   return (
     <div
-      className={`rounded-lg border border-slate-200 border-l-4 bg-white p-4 shadow-sm ${accent[tone]}`}
+      className={`rounded-2xl border-l-4 bg-white p-4 shadow-sm ring-1 ring-slate-100 ${accent[tone]}`}
     >
       <div className="text-xs font-medium text-slate-500">{label}</div>
       <div className="mt-1 flex items-baseline gap-2">

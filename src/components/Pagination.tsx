@@ -91,10 +91,10 @@ function PageBtn({
   const base =
     "inline-flex h-8 min-w-8 items-center justify-center rounded border px-2 text-xs font-medium transition-colors";
   const state = active
-    ? "border-indigo-600 bg-indigo-600 text-white"
+    ? "border-emerald-500 bg-emerald-500 text-white shadow-sm shadow-emerald-500/30"
     : disabled
     ? "border-slate-200 bg-white text-slate-300 cursor-not-allowed"
-    : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50";
+    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50";
   return (
     <button
       type="button"

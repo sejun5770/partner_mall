@@ -176,7 +176,7 @@ export default function OrderDetailModal({
               </span>
             )}
             {category && (
-              <span className="ml-1 inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 ring-1 ring-indigo-200">
+              <span className="ml-1 inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200">
                 {CATEGORY_LABEL[category]} 기준
               </span>
             )}
@@ -222,7 +222,7 @@ export default function OrderDetailModal({
                   <p className="text-xs font-medium text-slate-500">
                     {category ? `최종 결제금액 (${CATEGORY_LABEL[category]} 슬라이스)` : "최종 결제금액"}
                   </p>
-                  <p className="mt-0.5 text-2xl font-bold text-indigo-600">
+                  <p className="mt-0.5 text-2xl font-bold text-emerald-700">
                     {fmtAmount(data.payment.last_total_price)}
                     <span className="ml-0.5 text-sm font-normal text-slate-400">원</span>
                   </p>
@@ -296,7 +296,7 @@ export default function OrderDetailModal({
                     <Pair k="회원아이디">{data.orderer.member_id || "-"}</Pair>
                     <Pair k="E-Mail">
                       {data.orderer.email ? (
-                        <a href={`mailto:${data.orderer.email}`} className="text-indigo-600 hover:underline">
+                        <a href={`mailto:${data.orderer.email}`} className="text-emerald-700 hover:underline">
                           {data.orderer.email}
                         </a>
                       ) : (
@@ -371,14 +371,14 @@ function Timeline({ steps }: { steps: { label: string; at: string | null }[] }) 
               <span
                 aria-hidden
                 className={`absolute left-1/2 top-3 h-px w-full ${
-                  done ? "bg-indigo-300" : "bg-slate-200"
+                  done ? "bg-emerald-300" : "bg-slate-200"
                 }`}
               />
             )}
             <span
               className={`relative z-10 mb-1.5 inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold ${
                 done
-                  ? "bg-indigo-500 text-white ring-4 ring-indigo-50"
+                  ? "bg-emerald-500 text-white ring-4 ring-emerald-50"
                   : "bg-slate-200 text-slate-400 ring-4 ring-white"
               }`}
             >

@@ -14,7 +14,7 @@ export default async function DashboardPage() {
         </span>
       </div>
 
-      <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+      <section className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-100">
         <table className="w-full text-sm">
           <tbody className="divide-y divide-slate-100">
             <tr>
