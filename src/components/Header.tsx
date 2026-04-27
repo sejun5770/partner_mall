@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface HeaderProps {
   userName: string;
@@ -17,6 +17,19 @@ export default function Header({ userName }: HeaderProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [showLogout, setShowLogout] = useState(false);
+  const profileRef = useRef<HTMLDivElement>(null);
+
+  // Close profile dropdown on outside click
+  useEffect(() => {
+    if (!showLogout) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
+        setShowLogout(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [showLogout]);
 
   const handleLogout = async () => {
     await fetch("/api/account/signout", { method: "POST" });
@@ -24,58 +37,92 @@ export default function Header({ userName }: HeaderProps) {
   };
 
   return (
-    <header className="app-header">
-      <div className="logo">
-        <Link href="/dashboard">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="https://static.barunsoncard.com/barunsonmall/admin/images/logo_w.svg"
-            alt="바른손몰"
-            style={{ height: "22px" }}
-            onError={(e) => {
-              (e.target as HTMLImageElement).style.display = "none";
-              const span = document.createElement("span");
-              span.textContent = "바른손몰 B2B";
-              span.style.color = "#fff";
-              span.style.fontSize = "16px";
-              span.style.fontWeight = "700";
-              (e.target as HTMLImageElement).parentElement?.appendChild(span);
-            }}
-          />
-        </Link>
-      </div>
-      <nav className="navbar">
-        <ul>
-          {NAV_ITEMS.map((item) => (
-            <li
-              key={item.href}
-              className={pathname.startsWith(item.href) ? "active" : ""}
-            >
-              <Link href={item.href}>{item.label}</Link>
-            </li>
-          ))}
-        </ul>
-      </nav>
-      <div className="profile">
-        <a
-          href="#"
-          onClick={(e) => {
-            e.preventDefault();
-            setShowLogout(!showLogout);
-          }}
+    <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur">
+      <div className="mx-auto flex h-14 max-w-7xl items-center gap-6 px-6">
+        {/* Logo */}
+        <Link
+          href="/dashboard"
+          className="flex items-center gap-1.5 text-slate-900 hover:opacity-80"
         >
-          {userName} 님
-        </a>
-        <div className="logout" style={{ display: showLogout ? "block" : "none" }}>
-          <a
-            href="#"
-            onClick={(e) => {
-              e.preventDefault();
-              handleLogout();
-            }}
+          <span
+            aria-hidden
+            className="inline-block h-6 w-6 rounded-md bg-gradient-to-br from-emerald-400 to-teal-500"
+          />
+          <span className="font-semibold tracking-tight">
+            바른손몰 <span className="text-slate-400 font-normal">B2B</span>
+          </span>
+        </Link>
+
+        {/* Nav */}
+        <nav className="flex flex-1 items-center gap-1">
+          {NAV_ITEMS.map((item) => {
+            const active = pathname.startsWith(item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={
+                  "relative inline-flex h-14 items-center px-3 text-sm font-medium transition-colors " +
+                  (active
+                    ? "text-slate-900"
+                    : "text-slate-500 hover:text-slate-900")
+                }
+              >
+                {item.label}
+                {active && (
+                  <span
+                    aria-hidden
+                    className="absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-slate-900"
+                  />
+                )}
+              </Link>
+            );
+          })}
+        </nav>
+
+        {/* Profile */}
+        <div ref={profileRef} className="relative">
+          <button
+            type="button"
+            onClick={() => setShowLogout((v) => !v)}
+            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 transition-colors hover:bg-slate-50"
+            aria-haspopup="menu"
+            aria-expanded={showLogout}
           >
-            로그아웃
-          </a>
+            <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-emerald-100 text-xs font-semibold text-emerald-700">
+              {userName?.[0] ?? "?"}
+            </span>
+            <span className="max-w-[10rem] truncate">{userName} 님</span>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={`transition-transform ${showLogout ? "rotate-180" : ""}`}
+              aria-hidden
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+          {showLogout && (
+            <div
+              role="menu"
+              className="absolute right-0 mt-2 w-40 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                onClick={handleLogout}
+                className="block w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50"
+              >
+                로그아웃
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </header>
