@@ -84,6 +84,9 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
   const [loading, setLoading] = useState(true);
 
   const [filterMode, setFilterMode] = useState<FilterMode>("month");
+  // Period basis: "order" = 주문일, "send" = 배송일. Defaults to 주문일 to
+  // match the production portal's PG aggregate.
+  const [dateBasis, setDateBasis] = useState<"order" | "send">("order");
   const [month, setMonth] = useState(() => fmtMonth(new Date()));
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -121,6 +124,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
     if (isAdmin && selectedPartnerId) params.set("partnerShopId", selectedPartnerId);
     if (isAdmin && partnerNameSearch) params.set("partnerName", partnerNameSearch);
     if (categoryTab !== "all") params.set("category", categoryTab);
+    params.set("dateBasis", dateBasis);
 
     try {
       const res = await fetch(`/api/settlement?${params}`);
@@ -146,6 +150,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
     selectedPartnerId,
     partnerNameSearch,
     categoryTab,
+    dateBasis,
   ]);
 
   useEffect(() => {
@@ -165,6 +170,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
     if (isAdmin && selectedPartnerId) params.set("partnerShopId", selectedPartnerId);
     if (isAdmin && partnerNameSearch) params.set("partnerName", partnerNameSearch);
     if (categoryTab !== "all") params.set("category", categoryTab);
+    params.set("dateBasis", dateBasis);
     window.location.href = `/api/settlement/export?${params}`;
   };
 
@@ -182,6 +188,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
     setSelectedPartnerId("");
     setPartnerNameSearch("");
     setCategoryTab(isAdmin ? "all" : "invitation");
+    setDateBasis("order");
     setPage(1);
   };
 
@@ -248,6 +255,36 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
               />
             </div>
           )}
+
+          <div className="flex items-center gap-3">
+            <label className="w-24 text-sm font-medium text-slate-700">기준일</label>
+            <div className="flex gap-4 text-sm">
+              <label className="inline-flex items-center gap-1.5">
+                <input
+                  type="radio"
+                  name="dateBasis"
+                  checked={dateBasis === "order"}
+                  onChange={() => {
+                    setDateBasis("order");
+                    setPage(1);
+                  }}
+                />
+                주문일
+              </label>
+              <label className="inline-flex items-center gap-1.5">
+                <input
+                  type="radio"
+                  name="dateBasis"
+                  checked={dateBasis === "send"}
+                  onChange={() => {
+                    setDateBasis("send");
+                    setPage(1);
+                  }}
+                />
+                배송일
+              </label>
+            </div>
+          </div>
 
           <div className="flex items-center gap-3">
             <label className="w-24 text-sm font-medium text-slate-700">조회 구분</label>

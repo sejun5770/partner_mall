@@ -47,6 +47,15 @@ export async function GET(request: NextRequest) {
   const page = Math.max(1, parseInt(searchParams.get("page") || "1"));
   const pageSize = Math.min(200, Math.max(1, parseInt(searchParams.get("pageSize") || "20")));
   const month = searchParams.get("month");
+
+  // dateBasis selects which custom_order column is used for the period
+  // filter. Defaults to "order" so our totals line up with the production
+  // portal's PG aggregate (which uses 주문일 by default).
+  // 발송완료 (src_send_date IS NOT NULL) is still required regardless —
+  // un-shipped orders never enter settlement.
+  const dateBasis: "order" | "send" =
+    searchParams.get("dateBasis") === "send" ? "send" : "order";
+  const dateColumn = dateBasis === "send" ? "o.src_send_date" : "o.order_date";
   const dateFrom = searchParams.get("dateFrom");
   const dateTo = searchParams.get("dateTo");
 
@@ -121,8 +130,8 @@ export async function GET(request: NextRequest) {
     // later it can be added to the allow list.
     const sharedFilters = `
       o.src_send_date IS NOT NULL
-        AND o.src_send_date >= @startDate
-        AND o.src_send_date <  @endDateExcl
+        AND ${dateColumn} >= @startDate
+        AND ${dateColumn} <  @endDateExcl
         AND c.LOGIN_ID NOT IN ('s2_barunsoncard', 'deardeer')
         AND o.trouble_type = '0'
         AND (@companySeq IS NULL OR o.company_seq = @companySeq)
@@ -385,6 +394,7 @@ export async function GET(request: NextRequest) {
       isAdmin: user.isAdmin,
       filterCompanySeq,
       category,
+      dateBasis,
     });
   } catch (error) {
     console.error("Settlement fetch error:", error);

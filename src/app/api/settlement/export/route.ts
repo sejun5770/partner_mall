@@ -29,6 +29,11 @@ export async function GET(request: NextRequest) {
       ? rawCategory
       : null;
 
+  // Same date-basis switch as the list endpoint, default 주문일.
+  const dateBasis: "order" | "send" =
+    searchParams.get("dateBasis") === "send" ? "send" : "order";
+  const dateColumn = dateBasis === "send" ? "o.src_send_date" : "o.order_date";
+
   let filterCompanySeq: number | null;
   let partnerNameLike: string | null = null;
   if (user.isAdmin) {
@@ -84,8 +89,8 @@ export async function GET(request: NextRequest) {
     // /api/settlement/route.ts for the rationale).
     const sharedFilters = `
       o.src_send_date IS NOT NULL
-        AND o.src_send_date >= @startDate
-        AND o.src_send_date <  @endDateExcl
+        AND ${dateColumn} >= @startDate
+        AND ${dateColumn} <  @endDateExcl
         AND c.LOGIN_ID NOT IN ('s2_barunsoncard', 'deardeer')
         AND o.trouble_type = '0'
         AND (@companySeq IS NULL OR o.company_seq = @companySeq)
