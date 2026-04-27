@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import Pagination from "@/components/Pagination";
 import type { Category } from "@/lib/category";
 import { CATEGORY_LABEL } from "@/lib/category";
+import OrderDetailModal from "./OrderDetailModal";
 
 interface Settlement {
   order_seq: number;
@@ -93,6 +94,9 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
   const [partners, setPartners] = useState<PartnerOption[]>([]);
   const [selectedPartnerId, setSelectedPartnerId] = useState<string>("");
   const [partnerNameSearch, setPartnerNameSearch] = useState<string>("");
+
+  // Order-detail modal state
+  const [openOrderSeq, setOpenOrderSeq] = useState<number | null>(null);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -487,7 +491,15 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                       <Td>{total - (page - 1) * pageSize - idx}</Td>
                       {showPartnerCols && <Td>{s.login_id}</Td>}
                       {showPartnerCols && <Td>{s.company_name}</Td>}
-                      <Td>{s.order_seq}</Td>
+                      <Td>
+                        <button
+                          type="button"
+                          onClick={() => setOpenOrderSeq(s.order_seq)}
+                          className="font-medium text-indigo-600 underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-300 rounded"
+                        >
+                          {s.order_seq}
+                        </button>
+                      </Td>
                       {showCategoryCol && (
                         <Td>
                           <span
@@ -527,6 +539,13 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
           <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
         </div>
       </section>
+
+      {openOrderSeq != null && (
+        <OrderDetailModal
+          orderSeq={openOrderSeq}
+          onClose={() => setOpenOrderSeq(null)}
+        />
+      )}
     </div>
   );
 }
