@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
 import { getMssqlPool } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
+import { classifyCard, Category } from "@/lib/category";
 
 /**
  * GET /api/settlement/order/:orderSeq
@@ -10,16 +11,22 @@ import { getCurrentUser } from "@/lib/auth";
  * order detail view (주문상품 / 결제정보 / 주문금액 / 처리정보 / 주문자
  * / E-Mail / 연락처 / 기타 전달사항).
  *
- * Auth: admins can fetch any order; non-admin partners can only fetch
- * orders that belong to their own COMPANY_SEQ.
+ * Optional `?category=invitation|thankyou|goods` slices the modal to
+ * the same view the active settlement tab is on:
+ *   invitation → 상품합계 / 최종금액 = invitation slice
+ *                (last_total_price - thankyou_items - goods_items),
+ *                items list is filtered to invitation items only.
+ *   thankyou   → 상품합계 / 최종금액 = SUM of thankyou items only.
+ *   goods      → 상품합계 / 최종금액 = SUM of goods items only.
+ * Without `category` (전체 탭), the full order is returned.
  *
- * Date columns in custom_order are smalldatetime — pre-formatted on the
- * server (CONVERT(..., 120) gives "yyyy-MM-dd HH:mm:ss") to avoid the
- * timezone roll-forward we previously hit when the browser re-formatted
- * UTC-assumed Date objects in KST.
+ * Auth: admins can fetch any order; non-admin partners can only fetch
+ * orders that belong to their own COMPANY_SEQ. Non-admin requests are
+ * forced to category=invitation regardless of the query string, mirroring
+ * the list endpoint's behavior.
  */
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   ctx: { params: Promise<{ orderSeq: string }> }
 ) {
   const user = await getCurrentUser();
@@ -32,6 +39,16 @@ export async function GET(
   if (!Number.isFinite(orderSeq) || orderSeq <= 0) {
     return NextResponse.json({ message: "invalid order_seq" }, { status: 400 });
   }
+
+  const { searchParams } = new URL(request.url);
+  const rawCat = searchParams.get("category");
+  const requestedCategory: Category | null =
+    rawCat === "invitation" || rawCat === "thankyou" || rawCat === "goods"
+      ? rawCat
+      : null;
+  const category: Category | null = user.isAdmin
+    ? requestedCategory
+    : "invitation";
 
   try {
     const pool = await getMssqlPool();
@@ -60,7 +77,6 @@ export async function GET(
         print_date_str: string | null;
         send_date_str: string | null;
         cancel_date_str: string | null;
-        item_total: number | null;
       }>(`
         SELECT
           o.order_seq,
@@ -82,12 +98,7 @@ export async function GET(
           CONVERT(VARCHAR(19), o.src_confirm_date,  120) AS confirm_date_str,
           CONVERT(VARCHAR(19), o.src_print_date,    120) AS print_date_str,
           CONVERT(VARCHAR(19), o.src_send_date,     120) AS send_date_str,
-          CONVERT(VARCHAR(19), o.src_cancel_date,   120) AS cancel_date_str,
-          (
-            SELECT COALESCE(SUM(oi.item_sale_price * oi.item_count), 0)
-            FROM custom_order_item oi
-            WHERE oi.order_seq = o.order_seq
-          ) AS item_total
+          CONVERT(VARCHAR(19), o.src_cancel_date,   120) AS cancel_date_str
         FROM custom_order o
         JOIN COMPANY c ON c.COMPANY_SEQ = o.company_seq
         WHERE o.order_seq = @orderSeq
@@ -98,7 +109,6 @@ export async function GET(
       return NextResponse.json({ message: "not found" }, { status: 404 });
     }
 
-    // Non-admin can only see their own company's orders.
     if (!user.isAdmin && order.company_seq !== user.partnerShopId) {
       return NextResponse.json({ message: "forbidden" }, { status: 403 });
     }
@@ -109,12 +119,14 @@ export async function GET(
       .query<{
         Card_Code: string | null;
         Card_Name: string | null;
+        Card_Div: string | null;
         item_count: number | null;
         item_sale_price: number | null;
       }>(`
         SELECT
           sc.Card_Code,
           sc.Card_Name,
+          sc.Card_Div,
           oi.item_count,
           oi.item_sale_price
         FROM custom_order_item oi
@@ -123,11 +135,52 @@ export async function GET(
         ORDER BY oi.id
       `);
 
+    // Tag every item with its category and compute per-category subtotals.
+    const taggedItems = itemsResult.recordset.map((r) => {
+      const cat = classifyCard(r.Card_Div, r.Card_Code);
+      const amount = Number(r.item_sale_price ?? 0) * Number(r.item_count ?? 0);
+      return {
+        card_code: r.Card_Code ?? "",
+        card_name: r.Card_Name ?? "",
+        card_div: r.Card_Div ?? "",
+        category: cat,
+        count: Number(r.item_count ?? 0),
+        unit_price: Number(r.item_sale_price ?? 0),
+        amount,
+      };
+    });
+
+    const totals = { invitation: 0, thankyou: 0, goods: 0 };
+    for (const it of taggedItems) totals[it.category] += it.amount;
+
+    const lastTotalPrice = Number(order.last_total_price ?? 0);
+    const fullItemTotal = totals.invitation + totals.thankyou + totals.goods;
+
+    // Slice based on category tab. Mirrors the slicing in /api/settlement.
+    let displayItems = taggedItems;
+    let displayItemTotal = fullItemTotal;
+    let displayPayment = lastTotalPrice;
+
+    if (category === "invitation") {
+      displayItems = taggedItems.filter((it) => it.category === "invitation");
+      displayItemTotal = totals.invitation;
+      displayPayment = lastTotalPrice - totals.thankyou - totals.goods;
+    } else if (category === "thankyou") {
+      displayItems = taggedItems.filter((it) => it.category === "thankyou");
+      displayItemTotal = totals.thankyou;
+      displayPayment = totals.thankyou;
+    } else if (category === "goods") {
+      displayItems = taggedItems.filter((it) => it.category === "goods");
+      displayItemTotal = totals.goods;
+      displayPayment = totals.goods;
+    }
+
     return NextResponse.json({
       order_seq: order.order_seq,
       company_seq: order.company_seq,
       login_id: order.login_id,
       company_name: order.company_name,
+      category,
 
       orderer: {
         name: order.order_name ?? "",
@@ -139,32 +192,35 @@ export async function GET(
 
       payment: {
         pay_type: order.pay_Type ?? "",
-        // PG / 결제 최종 금액 — both come from last_total_price; the live
-        // schema doesn't expose a separate PG amount column.
-        pg_amount: Number(order.last_total_price ?? 0),
-        last_total_price: Number(order.last_total_price ?? 0),
-        item_total: Number(order.item_total ?? 0),
+        // pg_amount and last_total_price reflect the SLICE in category mode
+        // so the modal mirrors the tab's perspective. Untouched amounts are
+        // exposed under `full_*` for reference.
+        pg_amount: displayPayment,
+        last_total_price: displayPayment,
+        item_total: displayItemTotal,
         order_total_price: Number(order.order_total_price ?? 0),
+        full_last_total_price: lastTotalPrice,
+        full_item_total: fullItemTotal,
+        category_breakdown: {
+          invitation: totals.invitation,
+          thankyou: totals.thankyou,
+          goods: totals.goods,
+        },
       },
 
       dates: {
-        order_at: order.order_date_str,        // 주문일
-        ap_at: order.ap_date_str,              // 결제 승인일
-        compose_at: order.compose_date_str,    // 초안등록일
-        confirm_at: order.confirm_date_str,    // 컨펌일
-        print_at: order.print_date_str,        // 인쇄지시일
-        send_at: order.send_date_str,          // 배송일
-        cancel_at: order.cancel_date_str,      // 주문취소일
+        order_at: order.order_date_str,
+        ap_at: order.ap_date_str,
+        compose_at: order.compose_date_str,
+        confirm_at: order.confirm_date_str,
+        print_at: order.print_date_str,
+        send_at: order.send_date_str,
+        cancel_at: order.cancel_date_str,
       },
 
       etc_comment: order.order_etc_comment ?? "",
 
-      items: itemsResult.recordset.map((r) => ({
-        card_code: r.Card_Code ?? "",
-        card_name: r.Card_Name ?? "",
-        count: Number(r.item_count ?? 0),
-        unit_price: Number(r.item_sale_price ?? 0),
-      })),
+      items: displayItems,
     });
   } catch (error) {
     console.error("Order detail fetch error:", error);

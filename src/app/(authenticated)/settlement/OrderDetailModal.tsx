@@ -1,18 +1,24 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { Category } from "@/lib/category";
+import { CATEGORY_LABEL } from "@/lib/category";
 
 interface OrderItem {
   card_code: string;
   card_name: string;
+  card_div: string;
+  category: Category;
   count: number;
   unit_price: number;
+  amount: number;
 }
 
 interface OrderDetail {
   order_seq: number;
   login_id: string;
   company_name: string;
+  category: Category | null; // active category (null = 전체)
   orderer: {
     name: string;
     member_id: string;
@@ -26,6 +32,13 @@ interface OrderDetail {
     last_total_price: number;
     item_total: number;
     order_total_price: number;
+    full_last_total_price: number;
+    full_item_total: number;
+    category_breakdown: {
+      invitation: number;
+      thankyou: number;
+      goods: number;
+    };
   };
   dates: {
     order_at: string | null;
@@ -74,9 +87,16 @@ function fmtDateOnly(s: string | null | undefined): string {
 
 export default function OrderDetailModal({
   orderSeq,
+  category,
   onClose,
 }: {
   orderSeq: number;
+  /**
+   * Active settlement tab. When set, the modal slices items + amounts to
+   * the same scope as the list (e.g. on the 청첩장 tab, only invitation
+   * items are listed and 결제금액 = invitation slice). null = 전체 탭.
+   */
+  category: Category | null;
   onClose: () => void;
 }) {
   const [data, setData] = useState<OrderDetail | null>(null);
@@ -87,7 +107,10 @@ export default function OrderDetailModal({
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetch(`/api/settlement/order/${orderSeq}`)
+    const url = category
+      ? `/api/settlement/order/${orderSeq}?category=${category}`
+      : `/api/settlement/order/${orderSeq}`;
+    fetch(url)
       .then(async (res) => {
         const body = (await res.json().catch(() => ({}))) as {
           message?: string;
@@ -111,7 +134,7 @@ export default function OrderDetailModal({
     return () => {
       cancelled = true;
     };
-  }, [orderSeq]);
+  }, [orderSeq, category]);
 
   // ESC closes
   useEffect(() => {
@@ -152,6 +175,11 @@ export default function OrderDetailModal({
                 · {data.company_name} <span className="text-slate-400">({data.login_id})</span>
               </span>
             )}
+            {category && (
+              <span className="ml-1 inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 ring-1 ring-indigo-200">
+                {CATEGORY_LABEL[category]} 기준
+              </span>
+            )}
           </div>
           <button
             type="button"
@@ -184,13 +212,25 @@ export default function OrderDetailModal({
                     {fmtAmount(data.payment.item_total)}
                     <span className="ml-0.5 text-xs font-normal text-slate-400">원</span>
                   </p>
+                  {category && data.payment.full_item_total !== data.payment.item_total && (
+                    <p className="text-[11px] text-slate-400">
+                      전체 주문 상품: {fmtAmount(data.payment.full_item_total)}원
+                    </p>
+                  )}
                 </div>
                 <div>
-                  <p className="text-xs font-medium text-slate-500">최종 결제금액</p>
+                  <p className="text-xs font-medium text-slate-500">
+                    {category ? `최종 결제금액 (${CATEGORY_LABEL[category]} 슬라이스)` : "최종 결제금액"}
+                  </p>
                   <p className="mt-0.5 text-2xl font-bold text-indigo-600">
                     {fmtAmount(data.payment.last_total_price)}
                     <span className="ml-0.5 text-sm font-normal text-slate-400">원</span>
                   </p>
+                  {category && data.payment.full_last_total_price !== data.payment.last_total_price && (
+                    <p className="text-[11px] text-slate-400">
+                      전체 주문 결제: {fmtAmount(data.payment.full_last_total_price)}원
+                    </p>
+                  )}
                 </div>
               </section>
 

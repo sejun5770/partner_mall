@@ -1,44 +1,95 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getMysqlPool } from "@/lib/db";
-import type { RowDataPacket } from "mysql2";
+import { NextResponse } from "next/server";
+import { getMssqlPool } from "@/lib/db";
+import { getCurrentUser } from "@/lib/auth";
 
-export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const partnerShopId = searchParams.get("partnerShopId");
-  const userId = searchParams.get("userId");
-
-  if (!partnerShopId || !userId) {
-    return NextResponse.json({ message: "partnerShopId and userId required" }, { status: 400 });
+/**
+ * GET /api/partner
+ *
+ * Returns the basic 업체 정보 for the currently logged-in partner. Source
+ * of truth is bar_shop1.COMPANY (same table login authenticates against).
+ *
+ * Auth: requires a valid session. Always scopes to user.partnerShopId —
+ * even admins get their OWN COMPANY row here. (For browsing other
+ * partners, the admin uses the settlement page's partner dropdown.)
+ */
+export async function GET() {
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ message: "unauthorized" }, { status: 401 });
   }
 
   try {
-    const pool = getMysqlPool();
+    const pool = await getMssqlPool();
+    const result = await pool
+      .request()
+      .input("companySeq", user.partnerShopId)
+      .query<{
+        COMPANY_SEQ: number;
+        LOGIN_ID: string;
+        COMPANY_NAME: string;
+        COMPANY_NUM: string | null;
+        E_MAIL: string | null;
+        STATUS: string | null;
+        BOSS_NM: string | null;
+        BOSS_TEL_NO: string | null;
+        FAX_NO: string | null;
+        MNG_NM: string | null;
+        MNG_E_MAIL: string | null;
+        MNG_TEL_NO: string | null;
+        MNG_HP_NO: string | null;
+        ZIP_CODE: string | null;
+        FRONT_ADDR: string | null;
+        BACK_ADDR: string | null;
+        BANK_NM: string | null;
+        ACCOUNT_NO: string | null;
+        REGIST_DATE: Date | null;
+      }>(`
+        SELECT
+          COMPANY_SEQ, LOGIN_ID, COMPANY_NAME, COMPANY_NUM,
+          E_MAIL, STATUS,
+          BOSS_NM, BOSS_TEL_NO, FAX_NO,
+          MNG_NM, MNG_E_MAIL, MNG_TEL_NO, MNG_HP_NO,
+          ZIP_CODE, FRONT_ADDR, BACK_ADDR,
+          BANK_NM, ACCOUNT_NO,
+          REGIST_DATE
+        FROM COMPANY
+        WHERE COMPANY_SEQ = @companySeq
+      `);
 
-    // Partner info
-    const [partnerRows] = await pool.query<RowDataPacket[]>(
-      "SELECT id, partner_name, commission_rate FROM partner_shop WHERE id = ?",
-      [partnerShopId]
-    );
-
-    // User info
-    const [userRows] = await pool.query<RowDataPacket[]>(
-      "SELECT id, user_id, email FROM partner_users WHERE partner_shop_id = ? AND user_id = ? AND deleted_at IS NULL",
-      [partnerShopId, userId]
-    );
-
-    // Stats
-    const [statsRows] = await pool.query<RowDataPacket[]>(
-      `SELECT
-        (SELECT COUNT(*) FROM orders WHERE partner_shop_id = ?) as total_orders,
-        (SELECT COALESCE(SUM(total_money), 0) FROM orders WHERE partner_shop_id = ? AND order_state IN ('P', 'D')) as total_sales,
-        (SELECT COUNT(*) FROM users WHERE partner_shop_id = ?) as total_users`,
-      [partnerShopId, partnerShopId, partnerShopId]
-    );
+    const row = result.recordset[0];
+    if (!row) {
+      return NextResponse.json({ message: "not found" }, { status: 404 });
+    }
 
     return NextResponse.json({
-      partner: partnerRows[0] || { id: partnerShopId, partner_name: "-", commission_rate: 0 },
-      user: userRows[0] || { id: 0, user_id: userId, email: "-" },
-      stats: statsRows[0] || { total_orders: 0, total_sales: 0, total_users: 0 },
+      partner: {
+        company_seq: row.COMPANY_SEQ,
+        login_id: row.LOGIN_ID,
+        company_name: row.COMPANY_NAME,
+        company_num: row.COMPANY_NUM ?? "",
+        email: row.E_MAIL ?? "",
+        status: row.STATUS ?? "",
+      },
+      contact: {
+        boss_name: row.BOSS_NM ?? "",
+        boss_tel: row.BOSS_TEL_NO ?? "",
+        fax: row.FAX_NO ?? "",
+        manager_name: row.MNG_NM ?? "",
+        manager_email: row.MNG_E_MAIL ?? "",
+        manager_tel: row.MNG_TEL_NO ?? "",
+        manager_hp: row.MNG_HP_NO ?? "",
+      },
+      address: {
+        zip: row.ZIP_CODE ?? "",
+        front: row.FRONT_ADDR ?? "",
+        back: row.BACK_ADDR ?? "",
+      },
+      bank: {
+        name: row.BANK_NM ?? "",
+        account_no: row.ACCOUNT_NO ?? "",
+      },
+      regist_date: row.REGIST_DATE,
+      is_admin: user.isAdmin,
     });
   } catch (error) {
     console.error("Partner info error:", error);

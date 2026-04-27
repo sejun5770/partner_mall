@@ -14,7 +14,7 @@ export default async function PartnerPage() {
           {user.isAdmin ? "관리자" : user.partnerName} · {user.userId}
         </span>
       </div>
-      <PartnerInfo partnerShopId={user.partnerShopId} userId={user.userId} />
+      <PartnerInfo />
     </main>
   );
 }

@@ -1,7 +1,14 @@
 import sql from "mssql";
-import mysql from "mysql2/promise";
 
-// MSSQL connection pool (bar_shop1)
+/**
+ * Connection pool for bar_shop1 (Azure MSSQL).
+ *
+ * The DD wedding MySQL pool was removed: settlement / partner / login all
+ * pull from bar_shop1 now, and the production network refuses connections
+ * from outside-listed IPs to the DD MySQL host anyway. If DD wedding data
+ * is needed again later, reintroduce a separate helper here rather than
+ * leaving a dead `getMysqlPool` exported.
+ */
 const mssqlConfig: sql.config = {
   server: process.env.MSSQL_SERVER || "",
   port: parseInt(process.env.MSSQL_PORT || "1433"),
@@ -26,22 +33,4 @@ export async function getMssqlPool(): Promise<sql.ConnectionPool> {
     mssqlPool = await sql.connect(mssqlConfig);
   }
   return mssqlPool;
-}
-
-// MySQL connection pool (DD wedding)
-let mysqlPool: mysql.Pool | null = null;
-
-export function getMysqlPool(): mysql.Pool {
-  if (!mysqlPool) {
-    mysqlPool = mysql.createPool({
-      host: process.env.MYSQL_HOST || "",
-      port: parseInt(process.env.MYSQL_PORT || "3306"),
-      user: process.env.MYSQL_USER || "",
-      password: process.env.MYSQL_PASSWORD || "",
-      database: process.env.MYSQL_DATABASE || "wedding",
-      waitForConnections: true,
-      connectionLimit: 10,
-    });
-  }
-  return mysqlPool;
 }

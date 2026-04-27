@@ -1,124 +1,186 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 
 interface PartnerData {
   partner: {
-    id: number;
-    partner_name: string;
-    commission_rate: number;
-  };
-  user: {
-    id: number;
-    user_id: string;
+    company_seq: number;
+    login_id: string;
+    company_name: string;
+    company_num: string;
     email: string;
+    status: string;
   };
-  stats: {
-    total_orders: number;
-    total_sales: number;
-    total_users: number;
+  contact: {
+    boss_name: string;
+    boss_tel: string;
+    fax: string;
+    manager_name: string;
+    manager_email: string;
+    manager_tel: string;
+    manager_hp: string;
   };
+  address: {
+    zip: string;
+    front: string;
+    back: string;
+  };
+  bank: {
+    name: string;
+    account_no: string;
+  };
+  regist_date: string | null;
+  is_admin: boolean;
 }
 
-export default function PartnerInfo({
-  partnerShopId,
-  userId,
-}: {
-  partnerShopId: number;
-  userId: string;
-}) {
+const STATUS_LABEL: Record<string, { label: string; tone: "green" | "amber" | "slate" }> = {
+  S2: { label: "활성", tone: "green" },
+  S1: { label: "대기", tone: "amber" },
+  S3: { label: "비활성", tone: "slate" },
+};
+
+const STATUS_TONE_CLASS = {
+  green: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+  amber: "bg-amber-50 text-amber-700 ring-amber-200",
+  slate: "bg-slate-100 text-slate-600 ring-slate-200",
+};
+
+export default function PartnerInfo() {
   const [data, setData] = useState<PartnerData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const res = await fetch(`/api/partner?partnerShopId=${partnerShopId}&userId=${userId}`);
-        const result = await res.json();
-        setData(result);
-      } catch (err) {
-        console.error(err);
-      }
-      setLoading(false);
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetch("/api/partner")
+      .then(async (res) => {
+        const body = (await res.json().catch(() => ({}))) as Partial<PartnerData> & {
+          message?: string;
+        };
+        if (!cancelled) {
+          if (!res.ok) {
+            setError(body.message || "업체 정보를 불러올 수 없습니다.");
+            setData(null);
+          } else {
+            setData(body as PartnerData);
+          }
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError("업체 정보를 불러올 수 없습니다.");
+          setLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
     };
-    fetchData();
-  }, [partnerShopId, userId]);
+  }, []);
 
   if (loading) {
-    return <p style={{ textAlign: "center", padding: "40px" }}>로딩 중...</p>;
+    return <p className="py-12 text-center text-sm text-slate-500">로딩 중…</p>;
+  }
+  if (error || !data) {
+    return <p className="py-12 text-center text-sm text-rose-600">{error ?? "데이터 없음"}</p>;
   }
 
-  if (!data) {
-    return <p style={{ textAlign: "center", padding: "40px" }}>업체 정보를 불러올 수 없습니다.</p>;
-  }
+  const status = STATUS_LABEL[data.partner.status] ?? { label: data.partner.status || "-", tone: "slate" as const };
 
   return (
-    <div className="manage">
-      {/* Partner Basic Info */}
-      <div className="form_wrap">
-        <div style={{ marginBottom: "10px", position: "relative", paddingLeft: "18px" }}>
-          <span style={{ position: "absolute", left: 0, top: "50%", transform: "translateY(-50%)", fontSize: "12px" }}>▶</span>
-          <h4 style={{ fontSize: "15px", fontWeight: 600 }}>업체 기본정보</h4>
-        </div>
-        <table>
-          <tbody>
-            <tr>
-              <th>업체명</th>
-              <td>{data.partner.partner_name}</td>
-              <th>업체코드</th>
-              <td>{data.partner.id}</td>
-            </tr>
-            <tr>
-              <th>수수료율</th>
-              <td>{data.partner.commission_rate}%</td>
-              <th>상태</th>
-              <td><span style={{ color: "#268652", fontWeight: 600 }}>활성</span></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+    <div className="space-y-5">
+      <Section title="업체 기본정보">
+        <Grid>
+          <Field label="업체명" value={data.partner.company_name} strong />
+          <Field
+            label="상태"
+            value={
+              <span
+                className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ${STATUS_TONE_CLASS[status.tone]}`}
+              >
+                {status.label}
+              </span>
+            }
+          />
+          <Field label="아이디" value={data.partner.login_id} mono />
+          <Field label="업체 코드" value={data.partner.company_seq} mono />
+          <Field label="사업자번호" value={data.partner.company_num || "-"} mono />
+          <Field label="대표 이메일" value={data.partner.email || "-"} />
+        </Grid>
+      </Section>
 
-      {/* Account Info */}
-      <div className="form_wrap" style={{ marginTop: "20px" }}>
-        <div style={{ marginBottom: "10px", position: "relative", paddingLeft: "18px" }}>
-          <span style={{ position: "absolute", left: 0, top: "50%", transform: "translateY(-50%)", fontSize: "12px" }}>▶</span>
-          <h4 style={{ fontSize: "15px", fontWeight: 600 }}>담당자 정보</h4>
-        </div>
-        <table>
-          <tbody>
-            <tr>
-              <th>아이디</th>
-              <td>{data.user.user_id}</td>
-              <th>이메일</th>
-              <td>{data.user.email}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <Section title="대표 / 담당자">
+        <Grid>
+          <Field label="대표자명" value={data.contact.boss_name || "-"} />
+          <Field label="대표 전화" value={data.contact.boss_tel || "-"} />
+          <Field label="FAX" value={data.contact.fax || "-"} />
+          <Field label="담당자" value={data.contact.manager_name || "-"} />
+          <Field label="담당자 전화" value={data.contact.manager_tel || "-"} />
+          <Field label="담당자 휴대폰" value={data.contact.manager_hp || "-"} />
+          <Field label="담당자 이메일" value={data.contact.manager_email || "-"} />
+        </Grid>
+      </Section>
 
-      {/* Stats */}
-      <div className="form_wrap" style={{ marginTop: "20px" }}>
-        <div style={{ marginBottom: "10px", position: "relative", paddingLeft: "18px" }}>
-          <span style={{ position: "absolute", left: 0, top: "50%", transform: "translateY(-50%)", fontSize: "12px" }}>▶</span>
-          <h4 style={{ fontSize: "15px", fontWeight: 600 }}>통계 요약</h4>
-        </div>
-        <table>
-          <tbody>
-            <tr>
-              <th>총 주문수</th>
-              <td>{data.stats.total_orders.toLocaleString()} 건</td>
-              <th>총 매출</th>
-              <td>{data.stats.total_sales.toLocaleString()} 원</td>
-            </tr>
-            <tr>
-              <th>제휴 회원수</th>
-              <td>{data.stats.total_users.toLocaleString()} 명</td>
-              <th></th>
-              <td></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <Section title="주소">
+        <p className="text-sm text-slate-700">
+          {data.address.zip && (
+            <span className="mr-2 text-slate-500">[{data.address.zip}]</span>
+          )}
+          {data.address.front || "-"}
+          {data.address.back && <span className="ml-1 text-slate-500">{data.address.back}</span>}
+        </p>
+      </Section>
+
+      <Section title="정산 계좌">
+        <Grid>
+          <Field label="은행" value={data.bank.name || "-"} />
+          <Field label="계좌번호" value={data.bank.account_no || "-"} mono />
+        </Grid>
+      </Section>
+
+      <p className="text-xs text-slate-400">
+        ※ 업체 정보 변경은 바른손 관리자 포털에서 처리됩니다.
+      </p>
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <h2 className="mb-4 text-sm font-semibold text-slate-700">{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+function Grid({ children }: { children: React.ReactNode }) {
+  return <dl className="grid gap-x-6 gap-y-3 md:grid-cols-2">{children}</dl>;
+}
+
+function Field({
+  label,
+  value,
+  strong,
+  mono,
+}: {
+  label: string;
+  value: React.ReactNode;
+  strong?: boolean;
+  mono?: boolean;
+}) {
+  return (
+    <div className="flex items-baseline gap-3">
+      <dt className="w-28 shrink-0 text-xs font-medium text-slate-500">{label}</dt>
+      <dd
+        className={`flex-1 text-sm ${strong ? "font-semibold text-slate-900" : "text-slate-800"} ${
+          mono ? "font-mono" : ""
+        }`}
+      >
+        {value}
+      </dd>
     </div>
   );
 }

@@ -580,6 +580,10 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
       {openOrderSeq != null && (
         <OrderDetailModal
           orderSeq={openOrderSeq}
+          // Slice the modal to the active tab — clicking an order in the
+          // 청첩장 tab shows only the invitation slice; 전체 tab passes
+          // null and shows the full order.
+          category={categoryTab === "all" ? null : categoryTab}
           onClose={() => setOpenOrderSeq(null)}
         />
       )}
