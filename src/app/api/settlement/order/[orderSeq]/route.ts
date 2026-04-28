@@ -175,6 +175,27 @@ export async function GET(
       displayPayment = totals.goods;
     }
 
+    // For non-admin partners we mask the order-level totals: a partner is
+    // only entitled to see their own (청첩장) slice, not the order's full
+    // amounts which would leak the goods / 답례품 numbers handled by other
+    // partners (or by Barunson directly). Equating full_* to the slice
+    // values means the modal's optional sub-lines render as no-ops.
+    const exposeFull = user.isAdmin;
+    const fullLastTotalForClient = exposeFull ? lastTotalPrice : displayPayment;
+    const fullItemTotalForClient = exposeFull ? fullItemTotal : displayItemTotal;
+    const breakdownForClient = exposeFull
+      ? {
+          invitation: totals.invitation,
+          thankyou: totals.thankyou,
+          goods: totals.goods,
+        }
+      : {
+          // Partner only sees their own slice.
+          invitation: totals.invitation,
+          thankyou: 0,
+          goods: 0,
+        };
+
     return NextResponse.json({
       order_seq: order.order_seq,
       company_seq: order.company_seq,
@@ -193,19 +214,15 @@ export async function GET(
       payment: {
         pay_type: order.pay_Type ?? "",
         // pg_amount and last_total_price reflect the SLICE in category mode
-        // so the modal mirrors the tab's perspective. Untouched amounts are
-        // exposed under `full_*` for reference.
+        // so the modal mirrors the tab's perspective. full_* is the order's
+        // untouched total, only exposed to admins.
         pg_amount: displayPayment,
         last_total_price: displayPayment,
         item_total: displayItemTotal,
         order_total_price: Number(order.order_total_price ?? 0),
-        full_last_total_price: lastTotalPrice,
-        full_item_total: fullItemTotal,
-        category_breakdown: {
-          invitation: totals.invitation,
-          thankyou: totals.thankyou,
-          goods: totals.goods,
-        },
+        full_last_total_price: fullLastTotalForClient,
+        full_item_total: fullItemTotalForClient,
+        category_breakdown: breakdownForClient,
       },
 
       dates: {

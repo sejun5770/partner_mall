@@ -219,9 +219,7 @@ export default function OrderDetailModal({
                   )}
                 </div>
                 <div>
-                  <p className="text-xs font-medium text-slate-500">
-                    {category ? `최종 결제금액 (${CATEGORY_LABEL[category]} 슬라이스)` : "최종 결제금액"}
-                  </p>
+                  <p className="text-xs font-medium text-slate-500">최종 결제금액</p>
                   <p className="mt-0.5 text-2xl font-bold text-emerald-700">
                     {fmtAmount(data.payment.last_total_price)}
                     <span className="ml-0.5 text-sm font-normal text-slate-400">원</span>
