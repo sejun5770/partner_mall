@@ -132,7 +132,10 @@ export async function GET(request: NextRequest) {
       // partner front order_Wdd.asp form, stored next to wedd_name.
       wedd_place: string | null;
       wedd_date_str: string | null;
-      ftype: string | null;
+      // Rule-derived ceremony_kind (replaces wi.ftype which is the same
+      // semantic field but routinely out of sync with wedd_name in the
+      // live table — see comment near the SQL CASE expression below).
+      ceremony_kind: string | null;
       card_code: string | null;
       card_brand: string | null;
       card_div: string | null;
@@ -155,7 +158,19 @@ export async function GET(request: NextRequest) {
           wi.bride_name,
           wi.wedd_name,
           wi.wedd_place,
-          wi.ftype,
+          -- 예식구분: rule per the operations team —
+          --   0 = 예식장 비어있음
+          --   1 = wedd_name 에 '삼성' 포함 (삼성 계열 예식장)
+          --   2 = 그 외 예식장
+          -- The literal wi.ftype column is the same semantic field but
+          -- frequently out of sync (e.g. order 4730644 has '삼성' in the
+          -- wedd_name yet ftype = 0). The legacy operations workbook
+          -- recomputes the value from wedd_name on read, so we do too.
+          CASE
+            WHEN ISNULL(LTRIM(RTRIM(wi.wedd_name)), N'') = N'' THEN N'0'
+            WHEN wi.wedd_name LIKE N'%삼성%'                    THEN N'1'
+            ELSE N'2'
+          END AS ceremony_kind,
           CASE
             WHEN ISNULL(wi.event_year, '') = '' THEN NULL
             ELSE wi.event_year + '-'
@@ -215,7 +230,7 @@ export async function GET(request: NextRequest) {
       w.wedd_name,
       w.wedd_place,
       w.wedd_date_str,
-      w.ftype,
+      w.ceremony_kind,
       fi.Card_Code      AS card_code,
       fi.CardBrand      AS card_brand,
       fi.Card_Div       AS card_div,
@@ -417,7 +432,7 @@ export async function GET(request: NextRequest) {
           .map((x) => (x ?? "").trim())
           .filter(Boolean)
           .join(" "),                                 // 예식장
-        (r.ftype ?? "").trim(),                       // 예식구분
+        (r.ceremony_kind ?? "").trim(),               // 예식구분 (0/1/2)
         "",                                           // 비고
         KUBUN_LABEL[r.category] ?? "",                // 구분
         r.order_hphone ?? "",                         // 핸드폰
