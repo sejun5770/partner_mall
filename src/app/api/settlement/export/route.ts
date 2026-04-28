@@ -205,11 +205,6 @@ export async function GET(request: NextRequest) {
       -- like the simple-pay provider (카카오페이) or card auth number.
       o.pg_resultinfo,
       o.pg_resultinfo2,
-      CASE
-        WHEN o.OUTSOURCING_TYPE IS NULL
-          THEN FLOOR(o.last_total_price / 1.1)
-        ELSE 0
-      END AS supply_amount,
       CONVERT(VARCHAR(10), o.order_date,      23) AS order_date_str,
       CONVERT(VARCHAR(10), o.src_send_date,   23) AS send_date_str,
       CONVERT(VARCHAR(10), o.src_cancel_date, 23) AS cancel_date_str,
@@ -251,7 +246,12 @@ export async function GET(request: NextRequest) {
           fi.CardSet_Price  AS item_amount,
           cs.payment_amount,
           COALESCE(c.feeRate, 0)                                    AS commission_rate,
-          FLOOR(cs.payment_amount * COALESCE(c.feeRate, 0) / 100.0) AS commission_amount
+          FLOOR(cs.payment_amount * COALESCE(c.feeRate, 0) / 100.0) AS commission_amount,
+          CASE
+            WHEN o.OUTSOURCING_TYPE IS NULL
+              THEN FLOOR(cs.payment_amount / 1.1)
+            ELSE 0
+          END                                                       AS supply_amount
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN cat_slice cs ON cs.order_seq = o.order_seq
@@ -274,7 +274,12 @@ export async function GET(request: NextRequest) {
           fi.CardSet_Price   AS item_amount,
           o.last_total_price AS payment_amount,
           COALESCE(c.feeRate, 0)                                          AS commission_rate,
-          FLOOR(o.last_total_price * COALESCE(c.feeRate, 0) / 100.0)      AS commission_amount
+          FLOOR(o.last_total_price * COALESCE(c.feeRate, 0) / 100.0)      AS commission_amount,
+          CASE
+            WHEN o.OUTSOURCING_TYPE IS NULL
+              THEN FLOOR(o.last_total_price / 1.1)
+            ELSE 0
+          END                                                             AS supply_amount
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         OUTER APPLY (

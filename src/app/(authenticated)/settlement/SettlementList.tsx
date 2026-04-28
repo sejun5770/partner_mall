@@ -28,6 +28,9 @@ interface Settlement {
   payment_amount: number;
   commission_rate: number;
   commission_amount: number;
+  // 부가세 분리 공급가액 = floor(payment / 1.1) for in-house orders, 0 for
+  // outsourced. Mirrors the Excel export.
+  supply_amount: number;
 }
 
 interface CategoryStat {
@@ -567,7 +570,9 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                       <Td>{s.card_code}</Td>
                       <Td>{s.card_brand}</Td>
                       <Td align="right">{s.item_amount.toLocaleString()}</Td>
-                      <Td align="right">{DASH}</Td>
+                      <Td align="right">
+                        {s.supply_amount > 0 ? s.supply_amount.toLocaleString() : DASH}
+                      </Td>
                       <Td align="right">{s.payment_amount.toLocaleString()}</Td>
                       <Td align="right">{s.commission_rate}%</Td>
                       <Td align="right" className="font-semibold text-emerald-700">

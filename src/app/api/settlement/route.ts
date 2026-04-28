@@ -253,6 +253,12 @@ export async function GET(request: NextRequest) {
       // of truth without a JS-side N+1 lookup.
       commission_rate: number | null;
       commission_amount: number | null;
+      // 공급가액 = FLOOR(payment_amount / 1.1) when the order is processed
+      // in-house (OUTSOURCING_TYPE IS NULL); 0 for outsourced orders that
+      // don't carry VAT through Barunson's books. Computed on the displayed
+      // payment_amount (slice when a category tab is active, ltp when 전체)
+      // so the 결제금액 ↔ 공급가액 ratio reads cleanly per row.
+      supply_amount: number | null;
     };
 
     const weddJoin = `
@@ -306,7 +312,12 @@ export async function GET(request: NextRequest) {
           -- Per-company contract rate. NULL feeRate (inactive partners that
           -- somehow surface) defaults to 0% so we never invent a payout.
           COALESCE(c.feeRate, 0)                                    AS commission_rate,
-          FLOOR(cs.payment_amount * COALESCE(c.feeRate, 0) / 100.0) AS commission_amount
+          FLOOR(cs.payment_amount * COALESCE(c.feeRate, 0) / 100.0) AS commission_amount,
+          CASE
+            WHEN o.OUTSOURCING_TYPE IS NULL
+              THEN FLOOR(cs.payment_amount / 1.1)
+            ELSE 0
+          END                                                       AS supply_amount
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN cat_slice cs ON cs.order_seq = o.order_seq
@@ -347,7 +358,12 @@ export async function GET(request: NextRequest) {
           fi.CardSet_Price AS item_amount,
           o.last_total_price AS payment_amount,
           COALESCE(c.feeRate, 0)                                          AS commission_rate,
-          FLOOR(o.last_total_price * COALESCE(c.feeRate, 0) / 100.0)      AS commission_amount
+          FLOOR(o.last_total_price * COALESCE(c.feeRate, 0) / 100.0)      AS commission_amount,
+          CASE
+            WHEN o.OUTSOURCING_TYPE IS NULL
+              THEN FLOOR(o.last_total_price / 1.1)
+            ELSE 0
+          END                                                             AS supply_amount
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         OUTER APPLY (
@@ -393,6 +409,7 @@ export async function GET(request: NextRequest) {
         payment_amount: Number(r.payment_amount ?? 0),
         commission_rate: Number(r.commission_rate ?? 0),
         commission_amount: Number(r.commission_amount ?? 0),
+        supply_amount: Number(r.supply_amount ?? 0),
       };
     });
 
