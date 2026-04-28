@@ -3,13 +3,19 @@ import sql from "mssql";
 import { getMssqlPool } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { brandName } from "@/lib/brand";
-import { categoryCaseSql, Category, CATEGORY_LABEL } from "@/lib/category";
+import { categoryCaseSql, Category } from "@/lib/category";
 
 /**
  * GET /api/settlement/export
  *
- * CSV download of the current filter set (same semantics as the list
- * endpoint). Encoded UTF-8 + BOM for Excel.
+ * CSV download. Column layout matches the operations team's existing
+ * 32-column reporting template, so admins can drop the export straight
+ * into their accounting workbook without re-mapping. Encoded UTF-8 + BOM
+ * for Excel.
+ *
+ * Filter semantics mirror /api/settlement (date basis, partner filter,
+ * category, cancel exclude, trouble_type='0', etc.) so what's on screen
+ * is what comes out of the file, row-for-row.
  */
 export async function GET(request: NextRequest) {
   const user = await getCurrentUser();
@@ -28,7 +34,6 @@ export async function GET(request: NextRequest) {
       ? rawCategory
       : null;
 
-  // Same date-basis switch as the list endpoint, default 주문일.
   const dateBasis: "order" | "send" =
     searchParams.get("dateBasis") === "send" ? "send" : "order";
   const dateColumn = dateBasis === "send" ? "o.src_send_date" : "o.order_date";
@@ -84,9 +89,9 @@ export async function GET(request: NextRequest) {
     const firstItemCategoryExpr = categoryCaseSql("fi.Card_Div", "fi.Card_Code");
     const itemCategoryExpr = categoryCaseSql("sc.Card_Div", "sc.Card_Code");
 
-    // trouble_type='0' only — non-'0' codes are incidents (see
-    // /api/settlement/route.ts for the rationale).
-    // Mirrors the list endpoint — cancelled orders excluded.
+    // Mirrors the list endpoint — see /api/settlement/route.ts for the
+    // full rationale on each clause (cancelled / trouble / excluded
+    // partner accounts).
     const sharedFilters = `
       o.src_send_date IS NOT NULL
         AND o.src_cancel_date IS NULL
@@ -103,17 +108,26 @@ export async function GET(request: NextRequest) {
       company_seq: number;
       login_id: string;
       company_name: string;
+      erp_part_code: string | null;
+      mng_nm: string | null;
+      planner_name: string | null;
+      order_add_flag: string | null;
+      pay_type: string | null;
       // Pre-formatted YYYY-MM-DD strings to avoid timezone drift.
       order_date_str: string | null;
       send_date_str: string | null;
+      cancel_date_str: string | null;
       order_name: string | null;
-      planner_name: string | null;
+      order_hphone: string | null;
       groom_name: string | null;
       bride_name: string | null;
       wedd_name: string | null;
+      wedd_date_str: string | null;
+      ftype: string | null;
       card_code: string | null;
       card_brand: string | null;
       card_div: string | null;
+      item_count: number | null;
       category: Category;
       item_amount: number | null;
       payment_amount: number | null;
@@ -121,9 +135,23 @@ export async function GET(request: NextRequest) {
       commission_amount: number | null;
     };
 
+    // WeddInfo subquery — also builds the YYYY-MM-DD wedding date from
+    // event_year/month/Day so the timezone-conversion problem we hit on
+    // src_send_date doesn't recur. Months/days may be unpadded ('6', '20')
+    // in the source — RIGHT('0' + ..., 2) zero-pads.
     const weddJoin = `
       OUTER APPLY (
-        SELECT TOP 1 wi.groom_name, wi.bride_name, wi.wedd_name
+        SELECT TOP 1
+          wi.groom_name,
+          wi.bride_name,
+          wi.wedd_name,
+          wi.ftype,
+          CASE
+            WHEN ISNULL(wi.event_year, '') = '' THEN NULL
+            ELSE wi.event_year + '-'
+              + RIGHT('0' + ISNULL(wi.event_month, ''), 2) + '-'
+              + RIGHT('0' + ISNULL(wi.event_Day,   ''), 2)
+          END AS wedd_date_str
         FROM custom_order_WeddInfo wi
         WHERE wi.order_seq = o.order_seq
         ORDER BY wi.id DESC
@@ -150,6 +178,33 @@ export async function GET(request: NextRequest) {
       )
     `;
 
+    // Common SELECT projection (everything the new column set needs).
+    const projection = `
+      o.order_seq,
+      c.COMPANY_SEQ     AS company_seq,
+      c.LOGIN_ID        AS login_id,
+      c.COMPANY_NAME    AS company_name,
+      c.ERP_PartCode    AS erp_part_code,
+      c.MNG_NM          AS mng_nm,
+      o.card_opt        AS planner_name,
+      o.order_add_flag,
+      o.pay_Type        AS pay_type,
+      CONVERT(VARCHAR(10), o.order_date,      23) AS order_date_str,
+      CONVERT(VARCHAR(10), o.src_send_date,   23) AS send_date_str,
+      CONVERT(VARCHAR(10), o.src_cancel_date, 23) AS cancel_date_str,
+      o.order_name,
+      o.order_hphone,
+      w.groom_name,
+      w.bride_name,
+      w.wedd_name,
+      w.wedd_date_str,
+      w.ftype,
+      fi.Card_Code      AS card_code,
+      fi.CardBrand      AS card_brand,
+      fi.Card_Div       AS card_div,
+      fi.item_count
+    `;
+
     let result;
     if (category) {
       result = await req.query<ExportRow>(`
@@ -169,25 +224,9 @@ export async function GET(request: NextRequest) {
              OR (@category = 'goods'      AND has_gds = 1)
         )
         SELECT
-          o.order_seq,
-          c.COMPANY_SEQ     AS company_seq,
-          c.LOGIN_ID        AS login_id,
-          c.COMPANY_NAME    AS company_name,
-          CONVERT(VARCHAR(10), o.order_date, 23)    AS order_date_str,
-          CONVERT(VARCHAR(10), o.src_send_date, 23) AS send_date_str,
-          o.order_name,
-          -- card_opt is reused by the partner front order flow as the
-          -- "담당 플래너" free-text field — see partner.barunsoncard.com
-          -- order_Wdd.asp step 1.
-          o.card_opt        AS planner_name,
-          w.groom_name,
-          w.bride_name,
-          w.wedd_name,
-          fi.Card_Code      AS card_code,
-          fi.CardBrand      AS card_brand,
-          fi.Card_Div       AS card_div,
+          ${projection},
           @category         AS category,
-          fi.CardSet_Price AS item_amount,
+          fi.CardSet_Price  AS item_amount,
           cs.payment_amount,
           COALESCE(c.feeRate, 0)                                    AS commission_rate,
           FLOOR(cs.payment_amount * COALESCE(c.feeRate, 0) / 100.0) AS commission_amount
@@ -195,7 +234,7 @@ export async function GET(request: NextRequest) {
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN cat_slice cs ON cs.order_seq = o.order_seq
         OUTER APPLY (
-          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, sc.CardSet_Price
+          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, sc.CardSet_Price, oi.item_count
           FROM custom_order_item oi
           JOIN S2_Card sc ON oi.card_seq = sc.Card_Seq
           WHERE oi.order_seq = o.order_seq
@@ -208,29 +247,16 @@ export async function GET(request: NextRequest) {
     } else {
       result = await req.query<ExportRow>(`
         SELECT
-          o.order_seq,
-          c.COMPANY_SEQ     AS company_seq,
-          c.LOGIN_ID        AS login_id,
-          c.COMPANY_NAME    AS company_name,
-          CONVERT(VARCHAR(10), o.order_date, 23)    AS order_date_str,
-          CONVERT(VARCHAR(10), o.src_send_date, 23) AS send_date_str,
-          o.order_name,
-          o.card_opt        AS planner_name,
-          w.groom_name,
-          w.bride_name,
-          w.wedd_name,
-          fi.Card_Code      AS card_code,
-          fi.CardBrand      AS card_brand,
-          fi.Card_Div       AS card_div,
+          ${projection},
           ${firstItemCategoryExpr} AS category,
-          fi.CardSet_Price AS item_amount,
+          fi.CardSet_Price   AS item_amount,
           o.last_total_price AS payment_amount,
           COALESCE(c.feeRate, 0)                                          AS commission_rate,
           FLOOR(o.last_total_price * COALESCE(c.feeRate, 0) / 100.0)      AS commission_amount
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         OUTER APPLY (
-          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, sc.CardSet_Price
+          SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, sc.CardSet_Price, oi.item_count
           FROM custom_order_item oi
           JOIN S2_Card sc ON oi.card_seq = sc.Card_Seq
           WHERE oi.order_seq = o.order_seq
@@ -242,62 +268,87 @@ export async function GET(request: NextRequest) {
       `);
     }
 
+    // ─── Column layout ──────────────────────────────────────────────
+    // Operations team's 32-column accounting template.
     const headers = [
-      ...(user.isAdmin ? ["아이디", "제휴사명"] : []),
-      "주문번호",
-      ...(user.isAdmin ? ["분류"] : []),
-      "주문상태",
-      "주문일",
-      "결제일",
-      "배송일",
-      "주문자",
-      "신랑,신부",
-      "예식장",
-      "플래너명",
-      "주문카드",
-      "브랜드",
-      "소비자가격",
-      "공급가액",
-      "결제금액",
-      "수수료율",
-      "정산금액",
+      "주문번호", "부서", "제휴사ID", "제휴사", "담당자", "플래너명",
+      "추가방법", "주문일", "결제일", "배송일", "취소일",
+      "결제방법", "결제정보", "PG결제금액", "결제금액", "공급가액",
+      "최종금액", "수수료", "상태", "주문자명", "신랑/신부명",
+      "상품명", "브랜드", "소비자단가", "수량", "기타",
+      "예식일자", "예식장", "예식구분", "비고", "구분", "핸드폰",
     ];
 
+    // Category label specifically for the 구분 column. Matches what the
+    // accounting team uses on their template (slightly different from the
+    // app's CATEGORY_LABEL which says "청첩장" — here it's "일반청첩장").
+    const KUBUN_LABEL: Record<Category, string> = {
+      invitation: "일반청첩장",
+      thankyou: "답례품",
+      goods: "기념굿즈",
+    };
+
+    // pay_Type='0' is what the partner mall PG flow uses (≈100% of orders
+    // since 2026-04). Other codes are vanishingly rare and refer to legacy
+    // payment methods, so for those we just leave the columns blank rather
+    // than invent a label.
+    function payMethodLabels(code: string | null): { 결제방법: string; 결제정보: string } {
+      if ((code ?? "").trim() === "0") {
+        return { 결제방법: "간편결제", 결제정보: "간편결제 네이버페이" };
+      }
+      return { 결제방법: "", 결제정보: "" };
+    }
+
+    function additionMethod(flag: string | null): string {
+      const v = (flag ?? "").trim().toUpperCase();
+      // order_add_flag 'Y' is observed on follow-on (추가) orders.
+      return v === "Y" ? "추가주문" : "";
+    }
+
     const rows = result.recordset.map((r) => {
-      const paymentAmount = Number(r.payment_amount ?? 0);
-      const itemAmount = Number(r.item_amount ?? 0);
-      // commission_rate / commission_amount come from SQL (per-company
-      // COMPANY.feeRate). Same source the on-screen list uses, so the CSV
-      // and the screen agree row-for-row.
-      const ratePct = Number(r.commission_rate ?? 0);
-      const commission = Number(r.commission_amount ?? 0);
       const couple = [r.groom_name, r.bride_name]
         .map((x) => (x ?? "").trim())
         .filter(Boolean)
         .join(",");
-      const orderDate = r.order_date_str ?? "";
-      const sendDate = r.send_date_str ?? "";
+      const { 결제방법, 결제정보 } = payMethodLabels(r.pay_type);
+      const lastTotal = Number(r.payment_amount ?? 0);
+      const ratePct = Number(r.commission_rate ?? 0);
+      const itemUnit = Number(r.item_amount ?? 0);
+      const itemCnt = Number(r.item_count ?? 0);
 
       return [
-        ...(user.isAdmin ? [r.login_id, r.company_name] : []),
-        String(r.order_seq),
-        ...(user.isAdmin ? [CATEGORY_LABEL[r.category] ?? ""] : []),
-        "발송완료",
-        orderDate,
-        // 결제일 mirrors 주문일 (partner orders = instant PG settlement)
-        orderDate,
-        sendDate,
-        r.order_name ?? "",
-        couple,
-        r.wedd_name ?? "",
-        (r.planner_name ?? "").trim(),
-        r.card_code ?? "",
-        brandName(r.card_brand),
-        String(itemAmount),
-        "",
-        String(paymentAmount),
-        `${ratePct}%`,
-        String(commission),
+        String(r.order_seq),                          // 주문번호
+        r.erp_part_code ?? "",                        // 부서
+        r.login_id ?? "",                             // 제휴사ID
+        r.company_name ?? "",                         // 제휴사
+        r.mng_nm ?? "",                               // 담당자
+        (r.planner_name ?? "").trim(),                // 플래너명
+        additionMethod(r.order_add_flag),             // 추가방법
+        r.order_date_str ?? "",                       // 주문일
+        r.order_date_str ?? "",                       // 결제일 (instant PG = 주문일)
+        r.send_date_str ?? "",                        // 배송일
+        r.cancel_date_str ?? "",                      // 취소일
+        결제방법,                                     // 결제방법
+        결제정보,                                     // 결제정보
+        String(lastTotal),                            // PG결제금액
+        String(lastTotal),                            // 결제금액
+        "0",                                          // 공급가액 (미매핑)
+        String(lastTotal),                            // 최종금액
+        `${ratePct}%`,                                // 수수료
+        "발송완료",                                    // 상태
+        r.order_name ?? "",                           // 주문자명
+        couple,                                       // 신랑/신부명
+        r.card_code ?? "",                            // 상품명
+        brandName(r.card_brand),                      // 브랜드
+        String(itemUnit),                             // 소비자단가
+        String(itemCnt),                              // 수량
+        "-",                                          // 기타 (스펙 placeholder)
+        r.wedd_date_str ?? "",                        // 예식일자
+        r.wedd_name ?? "",                            // 예식장
+        (r.ftype ?? "").trim(),                       // 예식구분
+        "",                                           // 비고
+        KUBUN_LABEL[r.category] ?? "",                // 구분
+        r.order_hphone ?? "",                         // 핸드폰
       ];
     });
 
@@ -315,7 +366,7 @@ export async function GET(request: NextRequest) {
 
     const filename = `settlement_${startDate}_${endDateExcl}${category ? `_${category}` : ""}.csv`;
 
-    return new NextResponse("\uFEFF" + csvBody, {
+    return new NextResponse("﻿" + csvBody, {
       status: 200,
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
