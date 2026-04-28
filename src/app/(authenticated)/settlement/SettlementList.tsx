@@ -103,6 +103,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
   const [partners, setPartners] = useState<PartnerOption[]>([]);
   const [selectedPartnerId, setSelectedPartnerId] = useState<string>("");
   const [partnerNameSearch, setPartnerNameSearch] = useState<string>("");
+  const [plannerNameSearch, setPlannerNameSearch] = useState<string>("");
 
   // Order-detail modal state
   const [openOrderSeq, setOpenOrderSeq] = useState<number | null>(null);
@@ -129,6 +130,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
     }
     if (isAdmin && selectedPartnerId) params.set("partnerShopId", selectedPartnerId);
     if (isAdmin && partnerNameSearch) params.set("partnerName", partnerNameSearch);
+    if (plannerNameSearch.trim()) params.set("plannerName", plannerNameSearch.trim());
     if (categoryTab !== "all") params.set("category", categoryTab);
     params.set("dateBasis", dateBasis);
 
@@ -155,6 +157,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
     isAdmin,
     selectedPartnerId,
     partnerNameSearch,
+    plannerNameSearch,
     categoryTab,
     dateBasis,
   ]);
@@ -175,6 +178,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
     }
     if (isAdmin && selectedPartnerId) params.set("partnerShopId", selectedPartnerId);
     if (isAdmin && partnerNameSearch) params.set("partnerName", partnerNameSearch);
+    if (plannerNameSearch.trim()) params.set("plannerName", plannerNameSearch.trim());
     if (categoryTab !== "all") params.set("category", categoryTab);
     params.set("dateBasis", dateBasis);
     window.location.href = `/api/settlement/export?${params}`;
@@ -193,6 +197,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
     setDateTo("");
     setSelectedPartnerId("");
     setPartnerNameSearch("");
+    setPlannerNameSearch("");
     setCategoryTab(isAdmin ? "all" : "invitation");
     setDateBasis("order");
     setPage(1);
@@ -262,6 +267,18 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
               />
             </div>
           )}
+
+          {/* 플래너명 부분일치 — admin도 partner도 사용 가능. 비어 있으면 무시. */}
+          <div className="flex items-center gap-3">
+            <label className="w-24 text-sm font-medium text-slate-700">플래너명</label>
+            <input
+              type="text"
+              value={plannerNameSearch}
+              onChange={(e) => setPlannerNameSearch(e.target.value)}
+              placeholder="플래너명 검색 (부분일치)"
+              className="h-9 w-64 rounded border border-slate-300 bg-white px-2 text-sm"
+            />
+          </div>
 
           <div className="flex items-center gap-3">
             <label className="w-24 text-sm font-medium text-slate-700">기준일</label>

@@ -50,6 +50,9 @@ export async function GET(request: NextRequest) {
     filterCompanySeq = user.partnerShopId;
   }
 
+  const plannerNameRaw = searchParams.get("plannerName");
+  const plannerNameLike = plannerNameRaw ? `%${plannerNameRaw}%` : null;
+
   const category: Category | null = user.isAdmin ? requestedCategory : "invitation";
 
   let startDate: string;
@@ -85,6 +88,7 @@ export async function GET(request: NextRequest) {
       .input("endDateExcl", sql.Date, endDateExcl)
       .input("companySeq", sql.Int, filterCompanySeq)
       .input("partnerNameLike", sql.NVarChar, partnerNameLike)
+      .input("plannerNameLike", sql.NVarChar, plannerNameLike)
       .input("category", sql.VarChar, category);
 
     const firstItemCategoryExpr = categoryCaseSql("fi.Card_Div", "fi.Card_Code");
@@ -101,6 +105,7 @@ export async function GET(request: NextRequest) {
         AND o.trouble_type = '0'
         AND (@companySeq IS NULL OR o.company_seq = @companySeq)
         AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
+        AND (@plannerNameLike IS NULL OR o.card_opt LIKE @plannerNameLike)
     `;
 
     type ExportRow = {

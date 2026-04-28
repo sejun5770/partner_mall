@@ -75,6 +75,12 @@ export async function GET(request: NextRequest) {
     filterCompanySeq = user.partnerShopId;
   }
 
+  // 플래너명 부분일치 (custom_order.card_opt). Available for both admin
+  // and partners — partners often want to see only the orders for a
+  // specific planner on their team.
+  const plannerNameRaw = searchParams.get("plannerName");
+  const plannerNameLike = plannerNameRaw ? `%${plannerNameRaw}%` : null;
+
   const category: Category | null = user.isAdmin ? requestedCategory : "invitation";
 
   // Date range resolution
@@ -111,6 +117,7 @@ export async function GET(request: NextRequest) {
       .input("endDateExcl", sql.Date, endDateExcl)
       .input("companySeq", sql.Int, filterCompanySeq)
       .input("partnerNameLike", sql.NVarChar, partnerNameLike)
+      .input("plannerNameLike", sql.NVarChar, plannerNameLike)
       .input("category", sql.VarChar, category)
       .input("offset", sql.Int, (page - 1) * pageSize)
       .input("pageSize", sql.Int, pageSize);
@@ -145,6 +152,7 @@ export async function GET(request: NextRequest) {
         AND o.trouble_type = '0'
         AND (@companySeq IS NULL OR o.company_seq = @companySeq)
         AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
+        AND (@plannerNameLike IS NULL OR o.card_opt LIKE @plannerNameLike)
     `;
 
     // Per-order item-category sums. Uses categoryCaseSql so any change to
