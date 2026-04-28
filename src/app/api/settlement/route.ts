@@ -168,19 +168,26 @@ export async function GET(request: NextRequest) {
     // the goods / thankyou / invitation rule (lib/category.ts) is honored
     // in both directions: categorisation here matches what the list query
     // displays in the "분류" column.
-    // Per-order post-shipment refund total (custom_order_refund.refund_price
-    // where refund_date >= src_send_date). The legacy admin omits these
-    // from settlement, leaving partners over-paid; we subtract them so
-    // payment_amount and commission reflect what the customer actually
-    // ended up keeping.
+    // Per-order post-shipment refund total. Two constraints:
+    //   1) refund_date >= src_send_date  (post-shipment only)
+    //   2) refund_date ∈ [@startDate, @endDateExcl)  (현재 기간 내에 환불
+    //      예정일이 있는 건만 — 미래 환불은 해당 월에 상계처리됨)
+    //
+    // refund_date is stored as varchar in custom_order_refund; TRY_CAST
+    // returns NULL on malformed values, dropping bad rows silently.
+    //
+    // Example: 4734227 shipped 2026-04-26, 환불예정일 2026-05-07. In April
+    // view this refund is excluded (out of period); in May view it would
+    // be effective if we also showed orders refunded that month — that
+    // surfacing is operational and handled via the legacy 환불관리 page.
     const refundJoin = `
       LEFT JOIN (
         SELECT r.order_seq, SUM(r.refund_price) AS refund_after_send
         FROM custom_order_refund r
         JOIN custom_order o2 ON o2.order_seq = r.order_seq
-        -- refund_date is stored as varchar; TRY_CAST returns NULL for any
-        -- malformed value so the comparison silently drops bad rows.
         WHERE TRY_CAST(r.refund_date AS DATE) >= CAST(o2.src_send_date AS DATE)
+          AND TRY_CAST(r.refund_date AS DATE) >= @startDate
+          AND TRY_CAST(r.refund_date AS DATE) <  @endDateExcl
         GROUP BY r.order_seq
       ) rf ON rf.order_seq = o.order_seq
     `;

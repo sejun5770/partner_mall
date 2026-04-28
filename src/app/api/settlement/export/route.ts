@@ -220,13 +220,18 @@ export async function GET(request: NextRequest) {
       ) w
     `;
 
-    // Per-order post-shipment refund total. Mirrors /api/settlement.
+    // Per-order post-shipment refund total. Mirrors /api/settlement —
+    // refund_date must fall within the current period filter so that
+    // refunds with future 환불예정일 (e.g., 5월 expected refund on a
+    // 4월-shipped order) are deferred to that month's settlement.
     const refundJoin = `
       LEFT JOIN (
         SELECT r.order_seq, SUM(r.refund_price) AS refund_after_send
         FROM custom_order_refund r
         JOIN custom_order o2 ON o2.order_seq = r.order_seq
         WHERE TRY_CAST(r.refund_date AS DATE) >= CAST(o2.src_send_date AS DATE)
+          AND TRY_CAST(r.refund_date AS DATE) >= @startDate
+          AND TRY_CAST(r.refund_date AS DATE) <  @endDateExcl
         GROUP BY r.order_seq
       ) rf ON rf.order_seq = o.order_seq
     `;
