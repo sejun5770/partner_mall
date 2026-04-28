@@ -127,14 +127,18 @@ export async function GET(request: NextRequest) {
     // known 사고건 order 4733285 carries trouble_type='3601'. So keep only
     // trouble_type='0' for settlement. If a new non-incident code surfaces
     // later it can be added to the allow list.
-    // Cancelled orders (src_cancel_date IS NOT NULL) are net-refunded by
-    // the PG, so they should not show up in settlement. The production
-    // portal's PG aggregate already nets them out — including this filter
-    // both removes a real correctness bug and tightens the reconciliation
-    // gap with the legacy report.
+    //
+    // Note on src_cancel_date: a previous iteration also filtered by
+    // src_cancel_date IS NULL on the assumption that cancelled orders were
+    // net-refunded. Live data showed otherwise — across April 2026, all 81
+    // orders that carry both src_send_date AND src_cancel_date have
+    // cancel_date < send_date, i.e. "주문 → 취소 → 협의 → 재처리 → 발송"
+    // workflow rather than refunds. Filtering them out under-counted the
+    // settlement (e.g. directwedding lost 4 orders for the 2026-04 period
+    // vs the legacy portal). src_send_date IS NOT NULL alone is sufficient
+    // — true refunded orders never get a send_date.
     const sharedFilters = `
       o.src_send_date IS NOT NULL
-        AND o.src_cancel_date IS NULL
         AND ${dateColumn} >= @startDate
         AND ${dateColumn} <  @endDateExcl
         AND c.LOGIN_ID NOT IN ('s2_barunsoncard', 'deardeer')
