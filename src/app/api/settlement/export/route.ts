@@ -296,12 +296,17 @@ export async function GET(request: NextRequest) {
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN cat_slice cs ON cs.order_seq = o.order_seq
         OUTER APPLY (
+          -- A01-prefer + parent-order fallback. See /api/settlement
+          -- route.ts for the full rationale.
           SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, sc.CardSet_Price, oi.item_count
           FROM custom_order_item oi
           JOIN S2_Card sc ON oi.card_seq = sc.Card_Seq
-          WHERE oi.order_seq = o.order_seq
+          WHERE oi.order_seq IN (o.order_seq, ISNULL(o.up_order_seq, 0))
             AND ${itemCategoryExpr} = @category
-          ORDER BY oi.id ASC
+          ORDER BY
+            CASE WHEN sc.Card_Div = 'A01' THEN 0 ELSE 1 END,
+            CASE WHEN oi.order_seq = o.order_seq THEN 0 ELSE 1 END,
+            oi.id ASC
         ) fi
         ${weddJoin}
         WHERE
@@ -330,11 +335,16 @@ export async function GET(request: NextRequest) {
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN order_cats oc ON oc.order_seq = o.order_seq
         OUTER APPLY (
+          -- A01-prefer + parent-order fallback. See /api/settlement
+          -- route.ts for the full rationale.
           SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, sc.CardSet_Price, oi.item_count
           FROM custom_order_item oi
           JOIN S2_Card sc ON oi.card_seq = sc.Card_Seq
-          WHERE oi.order_seq = o.order_seq
-          ORDER BY oi.id ASC
+          WHERE oi.order_seq IN (o.order_seq, ISNULL(o.up_order_seq, 0))
+          ORDER BY
+            CASE WHEN sc.Card_Div = 'A01' THEN 0 ELSE 1 END,
+            CASE WHEN oi.order_seq = o.order_seq THEN 0 ELSE 1 END,
+            oi.id ASC
         ) fi
         ${weddJoin}
         WHERE ${sharedFilters}

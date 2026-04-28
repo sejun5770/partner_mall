@@ -385,16 +385,30 @@ export async function GET(request: NextRequest) {
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN cat_slice cs ON cs.order_seq = o.order_seq
         OUTER APPLY (
-          -- First item in the active category. CardSet_Price is the master
-          -- catalog set price (소비자가), which is what the production portal
-          -- shows. item_sale_price (실제 판매가) varies per order because of
-          -- discounts and isn't what we want in the "소비자가격" column.
+          -- First item in the active category, prefer the main 청첩장 card.
+          -- For [기]/[수] follow-on orders (up_order_seq IS NOT NULL) the
+          -- current order is often envelope/sticker only, so we fall back
+          -- to the PARENT order's A01 — that's the customer's real card,
+          -- which is what the legacy portal shows for these rows.
+          --
+          -- ORDER BY priority:
+          --   1) A01 (main 청첩장) before any other Card_Div
+          --   2) current order before parent order
+          --   3) oi.id ASC
+          --
+          -- CardSet_Price is the master catalog set price (소비자가), which
+          -- is what the production portal shows. item_sale_price (실제 판매가)
+          -- varies per order because of discounts and isn't what we want in
+          -- the "소비자가격" column.
           SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, sc.CardSet_Price
           FROM custom_order_item oi
           JOIN S2_Card sc ON oi.card_seq = sc.Card_Seq
-          WHERE oi.order_seq = o.order_seq
+          WHERE oi.order_seq IN (o.order_seq, ISNULL(o.up_order_seq, 0))
             AND ${itemCategoryExpr} = @category
-          ORDER BY oi.id ASC
+          ORDER BY
+            CASE WHEN sc.Card_Div = 'A01' THEN 0 ELSE 1 END,
+            CASE WHEN oi.order_seq = o.order_seq THEN 0 ELSE 1 END,
+            oi.id ASC
         ) fi
         ${weddJoin}
         WHERE
@@ -440,12 +454,16 @@ export async function GET(request: NextRequest) {
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN order_cats oc ON oc.order_seq = o.order_seq
         OUTER APPLY (
-          -- First item overall (전체 tab). See comment above on CardSet_Price.
+          -- First item overall (전체 tab) — same A01-prefer + parent-fallback
+          -- rule as the category branch (see comment there).
           SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, sc.CardSet_Price
           FROM custom_order_item oi
           JOIN S2_Card sc ON oi.card_seq = sc.Card_Seq
-          WHERE oi.order_seq = o.order_seq
-          ORDER BY oi.id ASC
+          WHERE oi.order_seq IN (o.order_seq, ISNULL(o.up_order_seq, 0))
+          ORDER BY
+            CASE WHEN sc.Card_Div = 'A01' THEN 0 ELSE 1 END,
+            CASE WHEN oi.order_seq = o.order_seq THEN 0 ELSE 1 END,
+            oi.id ASC
         ) fi
         ${weddJoin}
         WHERE ${sharedFilters}
