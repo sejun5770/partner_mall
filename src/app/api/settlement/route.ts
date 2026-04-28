@@ -81,6 +81,14 @@ export async function GET(request: NextRequest) {
   const plannerNameRaw = searchParams.get("plannerName");
   const plannerNameLike = plannerNameRaw ? `%${plannerNameRaw}%` : null;
 
+  // 제품구분 (전체 / 일반청첩장 / 고급청첩장).
+  //   premium = first item CardBrand = 'P' (프리미어페이퍼)
+  //   regular = first item exists AND CardBrand <> 'P'
+  //   all     = no filter
+  const rawKind = searchParams.get("productKind");
+  const productKind: "regular" | "premium" | null =
+    rawKind === "regular" || rawKind === "premium" ? rawKind : null;
+
   const category: Category | null = user.isAdmin ? requestedCategory : "invitation";
 
   // Date range resolution
@@ -118,6 +126,7 @@ export async function GET(request: NextRequest) {
       .input("companySeq", sql.Int, filterCompanySeq)
       .input("partnerNameLike", sql.NVarChar, partnerNameLike)
       .input("plannerNameLike", sql.NVarChar, plannerNameLike)
+      .input("productKind", sql.VarChar, productKind)
       .input("category", sql.VarChar, category)
       .input("offset", sql.Int, (page - 1) * pageSize)
       .input("pageSize", sql.Int, pageSize);
@@ -354,6 +363,10 @@ export async function GET(request: NextRequest) {
           ORDER BY oi.id ASC
         ) fi
         ${weddJoin}
+        WHERE
+          (@productKind IS NULL)
+          OR (@productKind = 'premium' AND fi.CardBrand = 'P')
+          OR (@productKind = 'regular' AND (fi.CardBrand IS NULL OR fi.CardBrand <> 'P'))
         ORDER BY o.src_send_date DESC, o.order_seq DESC
         OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
       `);
@@ -398,6 +411,11 @@ export async function GET(request: NextRequest) {
         ) fi
         ${weddJoin}
         WHERE ${sharedFilters}
+          AND (
+            (@productKind IS NULL)
+            OR (@productKind = 'premium' AND fi.CardBrand = 'P')
+            OR (@productKind = 'regular' AND (fi.CardBrand IS NULL OR fi.CardBrand <> 'P'))
+          )
         ORDER BY o.src_send_date DESC, o.order_seq DESC
         OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
       `);

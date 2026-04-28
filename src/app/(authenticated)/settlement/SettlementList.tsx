@@ -106,6 +106,9 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
   const [selectedPartnerId, setSelectedPartnerId] = useState<string>("");
   const [partnerNameSearch, setPartnerNameSearch] = useState<string>("");
   const [plannerNameSearch, setPlannerNameSearch] = useState<string>("");
+  // 제품구분: '' = 전체, 'regular' = 일반청첩장, 'premium' = 고급청첩장
+  // (premium = first item CardBrand='P' / 프리미어페이퍼)
+  const [productKind, setProductKind] = useState<"" | "regular" | "premium">("");
 
   // Order-detail modal state
   const [openOrderSeq, setOpenOrderSeq] = useState<number | null>(null);
@@ -133,6 +136,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
     if (isAdmin && selectedPartnerId) params.set("partnerShopId", selectedPartnerId);
     if (isAdmin && partnerNameSearch) params.set("partnerName", partnerNameSearch);
     if (plannerNameSearch.trim()) params.set("plannerName", plannerNameSearch.trim());
+    if (productKind) params.set("productKind", productKind);
     if (categoryTab !== "all") params.set("category", categoryTab);
     params.set("dateBasis", dateBasis);
 
@@ -160,6 +164,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
     selectedPartnerId,
     partnerNameSearch,
     plannerNameSearch,
+    productKind,
     categoryTab,
     dateBasis,
   ]);
@@ -181,6 +186,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
     if (isAdmin && selectedPartnerId) params.set("partnerShopId", selectedPartnerId);
     if (isAdmin && partnerNameSearch) params.set("partnerName", partnerNameSearch);
     if (plannerNameSearch.trim()) params.set("plannerName", plannerNameSearch.trim());
+    if (productKind) params.set("productKind", productKind);
     if (categoryTab !== "all") params.set("category", categoryTab);
     params.set("dateBasis", dateBasis);
     window.location.href = `/api/settlement/export?${params}`;
@@ -200,6 +206,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
     setSelectedPartnerId("");
     setPartnerNameSearch("");
     setPlannerNameSearch("");
+    setProductKind("");
     setCategoryTab(isAdmin ? "all" : "invitation");
     setDateBasis("order");
     setPage(1);
@@ -270,7 +277,9 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
             </div>
           )}
 
-          {/* 플래너명 부분일치 — admin도 partner도 사용 가능. 비어 있으면 무시. */}
+          {/* 플래너명 부분일치 — admin도 partner도 사용 가능. 비어 있으면 무시.
+              제품구분: '' = 전체 / regular = 일반청첩장 / premium = 고급청첩장
+              (premium = 첫 아이템 CardBrand='P' / 프리미어페이퍼). */}
           <div className="flex items-center gap-3">
             <label className="w-24 text-sm font-medium text-slate-700">플래너명</label>
             <input
@@ -280,6 +289,22 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
               placeholder="플래너명 검색 (부분일치)"
               className="h-9 w-64 rounded border border-slate-300 bg-white px-2 text-sm"
             />
+          </div>
+
+          <div className="flex items-center gap-3">
+            <label className="w-24 text-sm font-medium text-slate-700">제품구분</label>
+            <select
+              value={productKind}
+              onChange={(e) => {
+                setProductKind(e.target.value as "" | "regular" | "premium");
+                setPage(1);
+              }}
+              className="h-9 w-48 rounded border border-slate-300 bg-white px-2 text-sm"
+            >
+              <option value="">전체</option>
+              <option value="regular">일반청첩장</option>
+              <option value="premium">고급청첩장</option>
+            </select>
           </div>
 
           <div className="flex items-center gap-3">

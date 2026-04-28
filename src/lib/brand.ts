@@ -13,7 +13,7 @@ export const CARD_BRAND_NAME: Record<string, string> = {
   H: "비핸즈프리미엄",
   F: "플라워",
   D: "디자인카드",
-  P: "프리미어",
+  P: "프리미어페이퍼",
   M: "모바일",
   G: "글로벌",
   U: "유니세프",
