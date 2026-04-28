@@ -168,15 +168,38 @@ export async function GET(request: NextRequest) {
     // the goods / thankyou / invitation rule (lib/category.ts) is honored
     // in both directions: categorisation here matches what the list query
     // displays in the "분류" column.
-    // has_premium_inv = 1 when any A01 item in the order has CardBrand='P'
+    // Per-order post-shipment refund total (custom_order_refund.refund_price
+    // where refund_date >= src_send_date). The legacy admin omits these
+    // from settlement, leaving partners over-paid; we subtract them so
+    // payment_amount and commission reflect what the customer actually
+    // ended up keeping.
+    const refundJoin = `
+      LEFT JOIN (
+        SELECT r.order_seq, SUM(r.refund_price) AS refund_after_send
+        FROM custom_order_refund r
+        JOIN custom_order o2 ON o2.order_seq = r.order_seq
+        -- refund_date is stored as varchar; TRY_CAST returns NULL for any
+        -- malformed value so the comparison silently drops bad rows.
+        WHERE TRY_CAST(r.refund_date AS DATE) >= CAST(o2.src_send_date AS DATE)
+        GROUP BY r.order_seq
+      ) rf ON rf.order_seq = o.order_seq
+    `;
+
+    // has_premium_inv = 1 when any A01 item in the order has CardBrand='S'
     // (프리미어페이퍼). Used by every aggregate (overall / per-category /
     // 정산금액 합계) AND the row-level filter so the headline cards and
     // the list always reconcile under the productKind filter.
+    //
+    // ltp here is the post-refund effective amount: (last_total_price - refund_after_send).
+    // Every downstream aggregate (slices / commission / supply) treats
+    // this as the settlement base, fixing the legacy over-payment bug.
     const orderCatsCte = `
       order_cats AS (
         SELECT
           o.order_seq,
-          MAX(o.last_total_price) AS ltp,
+          MAX(o.last_total_price) - MAX(ISNULL(rf.refund_after_send, 0)) AS ltp,
+          MAX(o.last_total_price) AS gross_ltp,
+          MAX(ISNULL(rf.refund_after_send, 0)) AS refund_after_send,
           SUM(CASE WHEN ${itemCategoryExpr} = 'invitation' THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS inv_items,
           SUM(CASE WHEN ${itemCategoryExpr} = 'thankyou'   THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS tya_items,
           SUM(CASE WHEN ${itemCategoryExpr} = 'goods'      THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS gds_items,
@@ -188,6 +211,7 @@ export async function GET(request: NextRequest) {
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN custom_order_item oi ON oi.order_seq = o.order_seq
         JOIN S2_Card sc ON sc.Card_Seq = oi.card_seq
+        ${refundJoin}
         WHERE ${sharedFilters}
         GROUP BY o.order_seq
       )
@@ -440,12 +464,14 @@ export async function GET(request: NextRequest) {
           fi.Card_Div       AS card_div,
           ${firstItemCategoryExpr} AS category,
           fi.CardSet_Price AS item_amount,
-          o.last_total_price AS payment_amount,
+          -- payment_amount = last_total_price - 출고후 환불. Settles the
+          -- legacy bug where post-shipment refunds were ignored.
+          oc.ltp                                                          AS payment_amount,
           COALESCE(c.feeRate, 0)                                          AS commission_rate,
-          FLOOR(o.last_total_price * COALESCE(c.feeRate, 0) / 100.0)      AS commission_amount,
+          FLOOR(oc.ltp * COALESCE(c.feeRate, 0) / 100.0)                  AS commission_amount,
           CASE
             WHEN o.OUTSOURCING_TYPE IS NULL
-              THEN FLOOR(o.last_total_price / 1.1)
+              THEN FLOOR(oc.ltp / 1.1)
             ELSE 0
           END                                                             AS supply_amount,
           o.up_order_seq,

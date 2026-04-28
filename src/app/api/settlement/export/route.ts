@@ -162,6 +162,10 @@ export async function GET(request: NextRequest) {
       // operations report's 최종금액 column is last_total_price minus this
       // — verified against legacy: 200,885,911 - 2,772,200 = 198,113,711.
       sikgwon_amount: number | null;
+      // SUM(custom_order_refund.refund_price) where refund_date >=
+      // src_send_date — refunds that hit AFTER shipment. Subtracted from
+      // the settlement base so commission isn't paid on refunded amounts.
+      refund_after_send: number | null;
     };
 
     // WeddInfo subquery — also builds the YYYY-MM-DD wedding date from
@@ -216,11 +220,24 @@ export async function GET(request: NextRequest) {
       ) w
     `;
 
+    // Per-order post-shipment refund total. Mirrors /api/settlement.
+    const refundJoin = `
+      LEFT JOIN (
+        SELECT r.order_seq, SUM(r.refund_price) AS refund_after_send
+        FROM custom_order_refund r
+        JOIN custom_order o2 ON o2.order_seq = r.order_seq
+        WHERE TRY_CAST(r.refund_date AS DATE) >= CAST(o2.src_send_date AS DATE)
+        GROUP BY r.order_seq
+      ) rf ON rf.order_seq = o.order_seq
+    `;
+
     const orderCatsCte = `
       order_cats AS (
         SELECT
           o.order_seq,
-          MAX(o.last_total_price) AS ltp,
+          MAX(o.last_total_price) - MAX(ISNULL(rf.refund_after_send, 0)) AS ltp,
+          MAX(o.last_total_price) AS gross_ltp,
+          MAX(ISNULL(rf.refund_after_send, 0)) AS refund_after_send,
           SUM(CASE WHEN ${itemCategoryExpr} = 'invitation' THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS inv_items,
           SUM(CASE WHEN ${itemCategoryExpr} = 'thankyou'   THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS tya_items,
           SUM(CASE WHEN ${itemCategoryExpr} = 'goods'      THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS gds_items,
@@ -232,6 +249,7 @@ export async function GET(request: NextRequest) {
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN custom_order_item oi ON oi.order_seq = o.order_seq
         JOIN S2_Card sc ON sc.Card_Seq = oi.card_seq
+        ${refundJoin}
         WHERE ${sharedFilters}
         GROUP BY o.order_seq
       )
@@ -288,6 +306,7 @@ export async function GET(request: NextRequest) {
             order_seq,
             has_inv,
             has_premium_inv,
+            refund_after_send,
             CASE
               WHEN @category = 'invitation' THEN ltp - tya_items - gds_items
               WHEN @category = 'thankyou'   THEN tya_items
@@ -312,7 +331,8 @@ export async function GET(request: NextRequest) {
             ELSE 0
           END                                                       AS supply_amount,
           o.up_order_seq,
-          sk.sikgwon_amount
+          sk.sikgwon_amount,
+          cs.refund_after_send
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN cat_slice cs ON cs.order_seq = o.order_seq
@@ -344,16 +364,18 @@ export async function GET(request: NextRequest) {
           ${projection},
           ${firstItemCategoryExpr} AS category,
           fi.CardSet_Price   AS item_amount,
-          o.last_total_price AS payment_amount,
+          -- payment_amount net of post-shipment refund
+          oc.ltp             AS payment_amount,
           COALESCE(c.feeRate, 0)                                          AS commission_rate,
-          FLOOR(o.last_total_price * COALESCE(c.feeRate, 0) / 100.0)      AS commission_amount,
+          FLOOR(oc.ltp * COALESCE(c.feeRate, 0) / 100.0)                  AS commission_amount,
           CASE
             WHEN o.OUTSOURCING_TYPE IS NULL
-              THEN FLOOR(o.last_total_price / 1.1)
+              THEN FLOOR(oc.ltp / 1.1)
             ELSE 0
           END                                                             AS supply_amount,
           o.up_order_seq,
-          sk.sikgwon_amount
+          sk.sikgwon_amount,
+          oc.refund_after_send
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN order_cats oc ON oc.order_seq = o.order_seq
@@ -386,13 +408,15 @@ export async function GET(request: NextRequest) {
     // settlement row is 발송완료 by construction (src_send_date IS NOT
     // NULL filter), so the column would be a constant. 정산금액 added
     // immediately right of 수수료 — same SQL expression as the on-screen
-    // list so row totals reconcile with the headline.
+    // list so row totals reconcile with the headline. 환불금액 inserted
+    // between 결제금액 and 공급가액 to surface post-shipment refunds that
+    // the legacy report hides.
     const headers = [
       "주문번호", "부서", "제휴사ID", "제휴사", "담당자", "플래너명",
       "추가방법", "주문일", "결제일", "배송일", "취소일",
-      "결제방법", "결제정보", "PG결제금액", "결제금액", "공급가액",
-      "최종금액", "수수료", "정산금액", "주문자명", "신랑/신부명",
-      "상품명", "브랜드", "소비자단가", "수량", "기타",
+      "결제방법", "결제정보", "PG결제금액", "결제금액", "환불금액",
+      "공급가액", "최종금액", "수수료", "정산금액", "주문자명",
+      "신랑/신부명", "상품명", "브랜드", "소비자단가", "수량", "기타",
       "예식일자", "예식장", "예식구분", "비고", "구분", "핸드폰",
     ];
 
@@ -432,13 +456,18 @@ export async function GET(request: NextRequest) {
         r.pg_resultinfo,
         r.pg_resultinfo2
       );
-      const lastTotal = Number(r.payment_amount ?? 0);
+      // payment_amount is now NET of post-shipment refund (oc.ltp).
+      // grossTotal = original PG amount before refund, refund subtracted
+      // out for downstream columns.
+      const netTotal = Number(r.payment_amount ?? 0);
+      const refund = Number(r.refund_after_send ?? 0);
+      const grossTotal = netTotal + refund;
       const ratePct = Number(r.commission_rate ?? 0);
       const commission = Number(r.commission_amount ?? 0);
       const itemUnit = Number(r.item_amount ?? 0);
       const itemCnt = Number(r.item_count ?? 0);
       const sikgwon = Number(r.sikgwon_amount ?? 0);
-      const finalAmount = lastTotal - sikgwon;
+      const finalAmount = netTotal - sikgwon;
       const { prefix: orderPrefix, method: addMethod } = classifyAddition(
         r.up_order_seq,
         r.order_add_flag
@@ -458,12 +487,13 @@ export async function GET(request: NextRequest) {
         r.cancel_date_str ?? "",                      // 취소일
         결제방법,                                     // 결제방법
         결제정보,                                     // 결제정보
-        String(lastTotal),                            // PG결제금액
-        String(lastTotal),                            // 결제금액
-        String(Number(r.supply_amount ?? 0)),         // 공급가액 (자체 처리 = last/1.1, 외주 = 0)
-        String(finalAmount),                          // 최종금액 = 결제금액 - 식권금액
+        String(grossTotal),                           // PG결제금액 (환불 전, 실제 PG 결제액)
+        String(grossTotal),                           // 결제금액 (환불 전)
+        String(refund),                               // 환불금액 (출고후 환불)
+        String(Number(r.supply_amount ?? 0)),         // 공급가액 = (결제 - 환불) / 1.1
+        String(finalAmount),                          // 최종금액 = (결제 - 환불) - 식권금액
         `${ratePct}%`,                                // 수수료
-        String(commission),                           // 정산금액 (= 결제금액 × 수수료율)
+        String(commission),                           // 정산금액 = (결제 - 환불) × 수수료율
         r.order_name ?? "",                           // 주문자명
         couple,                                       // 신랑/신부명
         r.card_code ?? "",                            // 상품명
