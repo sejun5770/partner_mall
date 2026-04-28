@@ -239,6 +239,7 @@ export async function GET(request: NextRequest) {
       order_date_str: string | null;
       send_date_str: string | null;
       order_name: string | null;
+      planner_name: string | null;
       groom_name: string | null;
       bride_name: string | null;
       wedd_name: string | null;
@@ -285,6 +286,10 @@ export async function GET(request: NextRequest) {
           CONVERT(VARCHAR(10), o.order_date, 23)    AS order_date_str,
           CONVERT(VARCHAR(10), o.src_send_date, 23) AS send_date_str,
           o.order_name,
+          -- card_opt is reused by the partner front order flow as the
+          -- "담당 플래너" free-text field — see partner.barunsoncard.com
+          -- order_Wdd.asp step 1. NULL / empty when the partner skipped it.
+          o.card_opt        AS planner_name,
           w.groom_name,
           w.bride_name,
           w.wedd_name,
@@ -323,6 +328,7 @@ export async function GET(request: NextRequest) {
           CONVERT(VARCHAR(10), o.order_date, 23)    AS order_date_str,
           CONVERT(VARCHAR(10), o.src_send_date, 23) AS send_date_str,
           o.order_name,
+          o.card_opt        AS planner_name,
           w.groom_name,
           w.bride_name,
           w.wedd_name,
@@ -372,7 +378,7 @@ export async function GET(request: NextRequest) {
         order_name: r.order_name ?? null,
         couple: couple || null,
         wedd_name: r.wedd_name ?? null,
-        planner_name: null, // TODO
+        planner_name: (r.planner_name ?? "").trim() || null,
         card_code: r.card_code ?? "-",
         card_brand: brandName(r.card_brand),
         card_div: r.card_div ?? null,
