@@ -14,6 +14,21 @@ interface OrderItem {
   amount: number;
 }
 
+interface DraftEntry {
+  title: string;
+  choan_at: string | null;
+}
+
+interface ShippingInfo {
+  method: string;
+  recipient: string;
+  zip: string;
+  address: string;
+  delivery_company: string;
+  delivery_code: string;
+  memo: string;
+}
+
 interface OrderDetail {
   order_seq: number;
   login_id: string;
@@ -51,6 +66,8 @@ interface OrderDetail {
   };
   etc_comment: string;
   items: OrderItem[];
+  drafts: DraftEntry[];
+  shipping: ShippingInfo | null;
 }
 
 const PAY_TYPE_LABEL: Record<string, string> = {
@@ -286,6 +303,28 @@ export default function OrderDetailModal({
                 />
               </Section>
 
+              {/* Drafts (초안정보) — only render when at least one print
+                   plate has a draft uploaded. */}
+              {data.drafts && data.drafts.length > 0 && (
+                <Section title="초안 정보" count={data.drafts.length}>
+                  <ul className="divide-y divide-slate-100">
+                    {data.drafts.map((d, idx) => (
+                      <li
+                        key={idx}
+                        className="flex items-center justify-between gap-3 py-2 text-sm"
+                      >
+                        <span className="font-medium text-slate-800">
+                          {d.title || "-"}
+                        </span>
+                        <span className="text-xs text-slate-500">
+                          {fmtDateOnly(d.choan_at) || "-"}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </Section>
+              )}
+
               {/* Orderer + contact */}
               <Section title="주문자 / 연락처">
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -308,6 +347,43 @@ export default function OrderDetailModal({
                   </dl>
                 </div>
               </Section>
+
+              {/* Shipping (배송정보) */}
+              {data.shipping && (
+                <Section title="배송 정보">
+                  <dl className="space-y-2 text-sm">
+                    <Pair k="배송방법">{data.shipping.method || "-"}</Pair>
+                    <Pair k="받는사람">{data.shipping.recipient || "-"}</Pair>
+                    <Pair k="배송지">
+                      {data.shipping.address ? (
+                        <span>
+                          {data.shipping.zip && (
+                            <span className="mr-1.5 inline-flex items-center rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600">
+                              {data.shipping.zip}
+                            </span>
+                          )}
+                          {data.shipping.address}
+                        </span>
+                      ) : (
+                        "-"
+                      )}
+                    </Pair>
+                    {data.shipping.delivery_company && (
+                      <Pair k="택배사">
+                        {data.shipping.delivery_company}
+                        {data.shipping.delivery_code && (
+                          <span className="ml-1.5 text-xs text-slate-500">
+                            {data.shipping.delivery_code}
+                          </span>
+                        )}
+                      </Pair>
+                    )}
+                    {data.shipping.memo && (
+                      <Pair k="배송 메모">{data.shipping.memo}</Pair>
+                    )}
+                  </dl>
+                </Section>
+              )}
 
               {/* Memo */}
               {data.etc_comment && (

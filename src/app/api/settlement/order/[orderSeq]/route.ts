@@ -135,6 +135,84 @@ export async function GET(
         ORDER BY oi.id
       `);
 
+    // Drafts (초안정보) — only rows that actually have a draft uploaded.
+    // 봉투 / 부속품 entries live in custom_order_plist too but with
+    // choan_date NULL; the legacy portal hides those.
+    const draftsResult = await pool
+      .request()
+      .input("orderSeq", sql.Int, orderSeq)
+      .query<{ title: string | null; choan_at: string | null }>(`
+        SELECT
+          title,
+          CONVERT(VARCHAR(19), choan_date, 120) AS choan_at
+        FROM custom_order_plist
+        WHERE order_seq = @orderSeq
+          AND choan_date IS NOT NULL
+        ORDER BY choan_date ASC, id ASC
+      `);
+
+    // Shipping (배송정보) — usually exactly one row per order.
+    const shippingResult = await pool
+      .request()
+      .input("orderSeq", sql.Int, orderSeq)
+      .query<{
+        recipient: string | null;
+        zip: string | null;
+        addr: string | null;
+        addr_detail: string | null;
+        delivery_method: number | null;
+        delivery_company: string | null;
+        delivery_code: string | null;
+        memo: string | null;
+      }>(`
+        SELECT TOP 1
+          NAME              AS recipient,
+          ZIP               AS zip,
+          ADDR              AS addr,
+          ADDR_DETAIL       AS addr_detail,
+          DELIVERY_METHOD   AS delivery_method,
+          DELIVERY_COM      AS delivery_company,
+          DELIVERY_CODE_NUM AS delivery_code,
+          DELIVERY_MEMO     AS memo
+        FROM DELIVERY_INFO
+        WHERE ORDER_SEQ = @orderSeq
+        ORDER BY DELIVERY_SEQ ASC
+      `);
+
+    const drafts = draftsResult.recordset.map((d) => ({
+      title: (d.title ?? "").trim(),
+      choan_at: d.choan_at,
+    }));
+
+    // DELIVERY_METHOD: 1 = 택배 (≈100% of partner-mall orders). Other codes
+    // (0/2 etc.) appear so rarely in this DB that we leave them as raw
+    // numbers rather than invent labels.
+    const shipRow = shippingResult.recordset[0] ?? null;
+    const methodLabel = (() => {
+      if (!shipRow) return "";
+      switch (Number(shipRow.delivery_method ?? -1)) {
+        case 1:  return "택배";
+        case 2:  return "퀵서비스";
+        case 0:  return "직접수령";
+        default: return shipRow.delivery_method == null ? "" : String(shipRow.delivery_method);
+      }
+    })();
+    const shipping = shipRow
+      ? {
+          method: methodLabel,
+          recipient: shipRow.recipient ?? "",
+          zip: shipRow.zip ?? "",
+          // 우편번호 472-50 부산 부산진구 중앙대로 797 (부전동) 1718호 형태
+          address: [shipRow.addr ?? "", shipRow.addr_detail ?? ""]
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .join(" "),
+          delivery_company: shipRow.delivery_company ?? "",
+          delivery_code: shipRow.delivery_code ?? "",
+          memo: shipRow.memo ?? "",
+        }
+      : null;
+
     // Tag every item with its category and compute per-category subtotals.
     const taggedItems = itemsResult.recordset.map((r) => {
       const cat = classifyCard(r.Card_Div, r.Card_Code);
@@ -238,6 +316,9 @@ export async function GET(
       etc_comment: order.order_etc_comment ?? "",
 
       items: displayItems,
+
+      drafts,
+      shipping,
     });
   } catch (error) {
     console.error("Order detail fetch error:", error);
