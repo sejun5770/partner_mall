@@ -9,7 +9,7 @@ export default function ViewAsClient({ isPartner }: { isPartner: boolean }) {
   const label = isPartner ? "제휴사(비관리자)" : "관리자";
 
   useEffect(() => {
-    const id = setTimeout(() => router.replace("/dashboard"), 800);
+    const id = setTimeout(() => router.replace("/settlement"), 800);
     return () => clearTimeout(id);
   }, [router]);
 
@@ -19,8 +19,8 @@ export default function ViewAsClient({ isPartner }: { isPartner: boolean }) {
         <strong>{label}</strong> 뷰로 전환했습니다.
       </p>
       <p style={{ marginTop: 12, fontSize: 13, color: "#666" }}>
-        대시보드로 이동 중... 자동으로 이동하지 않으면{" "}
-        <Link href="/dashboard" style={{ color: "#8165bc", textDecoration: "underline" }}>
+        정산관리로 이동 중... 자동으로 이동하지 않으면{" "}
+        <Link href="/settlement" style={{ color: "#0d9488", textDecoration: "underline" }}>
           여기를 클릭
         </Link>
         하세요.

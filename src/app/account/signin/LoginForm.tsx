@@ -34,8 +34,8 @@ export default function LoginForm() {
       });
 
       if (res.ok) {
-        const returnUrl = searchParams?.get("ReturnUrl") || "/dashboard";
-        router.push(returnUrl.startsWith("/") ? returnUrl : "/dashboard");
+        const returnUrl = searchParams?.get("ReturnUrl") || "/settlement";
+        router.push(returnUrl.startsWith("/") ? returnUrl : "/settlement");
       } else {
         const data = await res.json().catch(() => ({}));
         setError(data.message || "로그인에 실패했습니다.");

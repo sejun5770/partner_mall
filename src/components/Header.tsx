@@ -41,7 +41,7 @@ export default function Header({ userName }: HeaderProps) {
       <div className="mx-auto flex h-14 max-w-7xl items-center gap-6 px-6">
         {/* Logo */}
         <Link
-          href="/dashboard"
+          href="/settlement"
           className="flex items-center gap-1.5 text-slate-900 hover:opacity-80"
         >
           <span
