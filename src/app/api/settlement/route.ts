@@ -392,12 +392,29 @@ export async function GET(request: NextRequest) {
 
     const filteredTotal = category ? byCategory[category].orders : totalOrders;
 
+    // ─── 총 정산금액 ────────────────────────────────────────────────
+    // 정산금액 = 매출 × 수수료율. The base shifts with the active category
+    // tab so the headline matches what's in the list:
+    //   invitation tab → SUM(invitation slices)
+    //   thankyou tab   → SUM(thankyou items)
+    //   goods tab      → SUM(goods items)
+    //   전체 (admin)   → SUM(last_total_price)
+    // Single rate today (env DEFAULT_COMMISSION_RATE). Once COMPANY.feeRate
+    // is wired per-company, swap this for a per-company SQL aggregation.
+    let commissionBase: number;
+    if (category === "invitation") commissionBase = byCategory.invitation.sales;
+    else if (category === "thankyou") commissionBase = byCategory.thankyou.sales;
+    else if (category === "goods") commissionBase = byCategory.goods.sales;
+    else commissionBase = totalSales;
+    const summaryRatePct = getCommissionRate(0);
+    const totalCommissionPaid = calcCommission(commissionBase, summaryRatePct);
+
     return NextResponse.json({
       settlements,
       summary: {
         total_orders: totalOrders,
         total_sales: totalSales,
-        total_commission_paid: 0,
+        total_commission_paid: totalCommissionPaid,
         by_category: byCategory,
       },
       total: filteredTotal,

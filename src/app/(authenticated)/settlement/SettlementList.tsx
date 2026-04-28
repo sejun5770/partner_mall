@@ -215,8 +215,9 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
   // to the 청첩장 category and the column would always say "청첩장".
   const showCategoryCol = isAdmin;
   // columns: NO, [아이디, 제휴사명], 주문번호, [분류], 주문상태, 주문일, 결제일, 배송일,
-  //          주문자, 신랑신부, 예식장, 플래너명, 주문카드, 브랜드, 소비자가격, 공급가액, 결제금액, 수수료
-  const colCount = (showPartnerCols ? 2 : 0) + (showCategoryCol ? 1 : 0) + 15;
+  //          주문자, 신랑신부, 예식장, 플래너명, 주문카드, 브랜드, 소비자가격,
+  //          공급가액, 결제금액, 수수료율, 정산금액
+  const colCount = (showPartnerCols ? 2 : 0) + (showCategoryCol ? 1 : 0) + 17;
 
   const byCat = summary?.by_category;
   const tabs: { key: CategoryTab; label: string; count?: number }[] = [
@@ -410,9 +411,9 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
           <SummaryCard label="총 주문건수" value={`${summary.total_orders.toLocaleString()} 건`} />
           <SummaryCard label="총 결제금액" value={`${summary.total_sales.toLocaleString()} 원`} tone="positive" />
           <SummaryCard
-            label="총 지급 수수료"
+            label="총 정산금액"
             value={`${summary.total_commission_paid.toLocaleString()} 원`}
-            tone="negative"
+            tone="positive"
           />
         </section>
       )}
@@ -505,7 +506,8 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                 <Th align="right">소비자가격</Th>
                 <Th align="right">공급가액</Th>
                 <Th align="right">결제금액</Th>
-                <Th align="right">수수료</Th>
+                <Th align="right">수수료율</Th>
+                <Th align="right">정산금액</Th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -568,6 +570,9 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                       <Td align="right">{DASH}</Td>
                       <Td align="right">{s.payment_amount.toLocaleString()}</Td>
                       <Td align="right">{s.commission_rate}%</Td>
+                      <Td align="right" className="font-semibold text-emerald-700">
+                        {s.commission_amount.toLocaleString()}
+                      </Td>
                     </tr>
                   );
                 })

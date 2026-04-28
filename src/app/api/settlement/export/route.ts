@@ -255,7 +255,7 @@ export async function GET(request: NextRequest) {
       "공급가액",
       "결제금액",
       "수수료율",
-      "수수료",
+      "정산금액",
     ];
 
     const rows = result.recordset.map((r) => {
