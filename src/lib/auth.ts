@@ -3,12 +3,17 @@ import { cookies } from "next/headers";
 import { getMssqlPool } from "@/lib/db";
 
 /**
- * JWT signing secret. In production we hard-fail at module load if the env
- * var is missing or still set to the publicly-visible default — otherwise
- * an attacker could forge admin tokens. In dev / non-prod we fall back to
- * a clearly marked dummy so local boots stay friction-free.
+ * JWT signing secret resolver. Evaluated lazily — `next build` loads route
+ * modules at compile time with NODE_ENV=production but no runtime secrets,
+ * so throwing at module load would break the Docker image build. We only
+ * enforce the production check when a token is actually signed/verified.
+ *
+ * Production: fail hard if the env var is missing or still the publicly
+ * known default — otherwise an attacker could forge admin tokens.
+ * Dev / non-prod: fall back to a clearly marked dummy so local boots are
+ * friction-free.
  */
-const JWT_SECRET = (() => {
+function getJwtSecret(): string {
   const v = process.env.JWT_SECRET;
   const isProd = process.env.NODE_ENV === "production";
   if (!v || v === "partner-mall-jwt-secret" || v === "partner-mall-jwt-secret-change-this") {
@@ -21,7 +26,7 @@ const JWT_SECRET = (() => {
     return "partner-mall-jwt-secret-DEV-ONLY";
   }
   return v;
-})();
+}
 
 const TOKEN_NAME = "partner_token";
 
@@ -77,12 +82,12 @@ export async function isAdminLoginId(loginId: string): Promise<boolean> {
 }
 
 export function signToken(user: PartnerUser): string {
-  return jwt.sign(user, JWT_SECRET, { expiresIn: "8h" });
+  return jwt.sign(user, getJwtSecret(), { expiresIn: "8h" });
 }
 
 export function verifyToken(token: string): PartnerUser | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as PartnerUser;
+    return jwt.verify(token, getJwtSecret()) as PartnerUser;
   } catch {
     return null;
   }
