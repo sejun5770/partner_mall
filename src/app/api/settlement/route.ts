@@ -677,12 +677,25 @@ export async function GET(request: NextRequest) {
       commissionResult.recordset[0]?.total_commission ?? 0
     );
 
+    // Total refund SUM in the period — covers both shipped-in-period
+    // orders (refund deducts from net) and refund-only rows (the offset
+    // row). Same admin/partner + productKind constraints as the other
+    // summary aggregates so the headline matches the row context.
+    const refundResult = await req.query<{ total_refund: number | null }>(`
+      WITH ${orderCatsCte}
+      SELECT COALESCE(SUM(refund_after_send), 0) AS total_refund
+      FROM order_cats
+      ${summaryWhere}
+    `);
+    const totalRefund = Number(refundResult.recordset[0]?.total_refund ?? 0);
+
     return NextResponse.json({
       settlements,
       summary: {
         total_orders: totalOrders,
         total_sales: totalSales,
         total_commission_paid: totalCommissionPaid,
+        total_refund: totalRefund,
         by_category: byCategory,
       },
       total: filteredTotal,

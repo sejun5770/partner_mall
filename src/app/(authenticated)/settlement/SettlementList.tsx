@@ -49,6 +49,7 @@ interface SettlementSummary {
   total_orders: number;
   total_sales: number;
   total_commission_paid: number;
+  total_refund: number;
   by_category?: {
     invitation: CategoryStat;
     thankyou: CategoryStat;
@@ -456,16 +457,26 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
         </section>
       )}
 
-      {/* Totals — order-level. 총 결제금액 is SUM(last_total_price), so it
-          reflects the actual 결제금액 (includes delivery/jebon/coupon etc.). */}
+      {/* Totals — three cards: 총 결제금액 (left), 총 정산금액 (middle),
+          총 환불금액 (right). 총 주문건수 is dropped because the list's
+          전체 / 청첩장 tabs effectively show the same count for partner
+          mall settlement. */}
       {summary && (
         <section className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          <SummaryCard label="총 주문건수" value={`${summary.total_orders.toLocaleString()} 건`} />
-          <SummaryCard label="총 결제금액" value={`${summary.total_sales.toLocaleString()} 원`} tone="positive" />
+          <SummaryCard
+            label="총 결제금액"
+            value={`${summary.total_sales.toLocaleString()} 원`}
+            tone="positive"
+          />
           <SummaryCard
             label="총 정산금액"
             value={`${summary.total_commission_paid.toLocaleString()} 원`}
             tone="positive"
+          />
+          <SummaryCard
+            label="총 환불금액"
+            value={`${summary.total_refund.toLocaleString()} 원`}
+            tone="negative"
           />
         </section>
       )}
