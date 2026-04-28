@@ -106,7 +106,7 @@ export async function GET(request: NextRequest) {
       o.src_send_date IS NOT NULL
         AND ${dateColumn} >= @startDate
         AND ${dateColumn} <  @endDateExcl
-        AND c.LOGIN_ID NOT IN ('s2_barunsoncard', 'deardeer')
+        AND c.LOGIN_ID NOT IN ('s2_barunsoncard', 'deardeer', 's2_storyoflove')
         AND o.trouble_type = '0'
         AND (@companySeq IS NULL OR o.company_seq = @companySeq)
         AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
