@@ -112,7 +112,8 @@ export async function GET(request: NextRequest) {
       mng_nm: string | null;
       planner_name: string | null;
       order_add_flag: string | null;
-      pay_type: string | null;
+      pg_resultinfo: string | null;
+      pg_resultinfo2: string | null;
       // Pre-formatted YYYY-MM-DD strings to avoid timezone drift.
       order_date_str: string | null;
       send_date_str: string | null;
@@ -188,7 +189,13 @@ export async function GET(request: NextRequest) {
       c.MNG_NM          AS mng_nm,
       o.card_opt        AS planner_name,
       o.order_add_flag,
-      o.pay_Type        AS pay_type,
+      -- Real payment method/provider lives on the PG result fields, not
+      -- pay_Type (which is a coarse legacy code; ~100% '0' for current
+      -- partner-flow orders so it carries no signal). pg_resultinfo holds
+      -- the bank/card/payment-rail name; pg_resultinfo2 holds extra info
+      -- like the simple-pay provider (카카오페이) or card auth number.
+      o.pg_resultinfo,
+      o.pg_resultinfo2,
       CONVERT(VARCHAR(10), o.order_date,      23) AS order_date_str,
       CONVERT(VARCHAR(10), o.src_send_date,   23) AS send_date_str,
       CONVERT(VARCHAR(10), o.src_cancel_date, 23) AS cancel_date_str,
@@ -269,12 +276,16 @@ export async function GET(request: NextRequest) {
     }
 
     // ─── Column layout ──────────────────────────────────────────────
-    // Operations team's 32-column accounting template.
+    // Operations team's accounting template. 상태 column dropped — every
+    // settlement row is 발송완료 by construction (src_send_date IS NOT
+    // NULL filter), so the column would be a constant. 정산금액 added
+    // immediately right of 수수료 — same SQL expression as the on-screen
+    // list so row totals reconcile with the headline.
     const headers = [
       "주문번호", "부서", "제휴사ID", "제휴사", "담당자", "플래너명",
       "추가방법", "주문일", "결제일", "배송일", "취소일",
       "결제방법", "결제정보", "PG결제금액", "결제금액", "공급가액",
-      "최종금액", "수수료", "상태", "주문자명", "신랑/신부명",
+      "최종금액", "수수료", "정산금액", "주문자명", "신랑/신부명",
       "상품명", "브랜드", "소비자단가", "수량", "기타",
       "예식일자", "예식장", "예식구분", "비고", "구분", "핸드폰",
     ];
@@ -288,15 +299,48 @@ export async function GET(request: NextRequest) {
       goods: "기념굿즈",
     };
 
-    // pay_Type='0' is what the partner mall PG flow uses (≈100% of orders
-    // since 2026-04). Other codes are vanishingly rare and refer to legacy
-    // payment methods, so for those we just leave the columns blank rather
-    // than invent a label.
-    function payMethodLabels(code: string | null): { 결제방법: string; 결제정보: string } {
-      if ((code ?? "").trim() === "0") {
-        return { 결제방법: "간편결제", 결제정보: "간편결제 네이버페이" };
+    // Payment method classifier. Reads the real PG result fields:
+    //   pg_resultinfo  — bank/card name or "간편결제 <provider>"
+    //   pg_resultinfo2 — extra context (auth number, simple-pay provider)
+    //
+    // Live distribution of shipped 2026-04 orders:
+    //   신용카드          1559   (NH농협카드 / KB국민카드 / VISA …)
+    //   간편결제          1416   (간편결제 네이버페이 / 카카오페이 …)
+    //   가상계좌           602   (은행 + 계좌번호 + 입금자명)
+    //   실시간계좌이체     229   (은행 only, no account)
+    //
+    // Heuristics — checked against the bar_shop1 distribution; ordering
+    // matters (간편결제 wins over 카드 because a card number is often the
+    // funding source for a simple-pay).
+    function classifyPayment(
+      info: string | null,
+      info2: string | null
+    ): { method: string; detail: string } {
+      const a = (info ?? "").trim();
+      const b = (info2 ?? "").trim();
+      const detail = [a, b].filter(Boolean).join(" ").trim();
+      const both = `${a} ${b}`;
+
+      if (
+        a.startsWith("간편결제") ||
+        /(?:네이버페이|카카오페이|토스페이|페이코|SSGPAY|애플페이|삼성페이|LPAY|KPAY)/.test(both)
+      ) {
+        return { method: "간편결제", detail };
       }
-      return { 결제방법: "", 결제정보: "" };
+      if (/카드/.test(a) || /^(?:VISA|MASTER|AMEX|JCB)/i.test(a)) {
+        return { method: "신용카드", detail };
+      }
+      // Bank-rail families.
+      if (/(?:은행|뱅크|신협|새마을금고|우체국)/.test(a)) {
+        // 가상계좌: long account number AND a Korean depositor name in
+        // pg_resultinfo (e.g. "iM뱅크 9600804499517 권민희"). Plain bank
+        // name only ("KB국민은행") = 실시간계좌이체.
+        if (/\d{10,}/.test(a) && /[가-힣]+\s*$/.test(a)) {
+          return { method: "가상계좌", detail };
+        }
+        return { method: "실시간계좌이체", detail };
+      }
+      return { method: detail ? "기타" : "", detail };
     }
 
     function additionMethod(flag: string | null): string {
@@ -310,9 +354,13 @@ export async function GET(request: NextRequest) {
         .map((x) => (x ?? "").trim())
         .filter(Boolean)
         .join(",");
-      const { 결제방법, 결제정보 } = payMethodLabels(r.pay_type);
+      const { method: 결제방법, detail: 결제정보 } = classifyPayment(
+        r.pg_resultinfo,
+        r.pg_resultinfo2
+      );
       const lastTotal = Number(r.payment_amount ?? 0);
       const ratePct = Number(r.commission_rate ?? 0);
+      const commission = Number(r.commission_amount ?? 0);
       const itemUnit = Number(r.item_amount ?? 0);
       const itemCnt = Number(r.item_count ?? 0);
 
@@ -335,7 +383,7 @@ export async function GET(request: NextRequest) {
         "0",                                          // 공급가액 (미매핑)
         String(lastTotal),                            // 최종금액
         `${ratePct}%`,                                // 수수료
-        "발송완료",                                    // 상태
+        String(commission),                           // 정산금액 (= 결제금액 × 수수료율)
         r.order_name ?? "",                           // 주문자명
         couple,                                       // 신랑/신부명
         r.card_code ?? "",                            // 상품명
