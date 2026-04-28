@@ -3,7 +3,6 @@ import sql from "mssql";
 import { getMssqlPool } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { brandName } from "@/lib/brand";
-import { getCommissionRate, calcCommission } from "@/lib/commission";
 import { categoryCaseSql, Category, CATEGORY_LABEL } from "@/lib/category";
 
 /**
@@ -118,6 +117,8 @@ export async function GET(request: NextRequest) {
       category: Category;
       item_amount: number | null;
       payment_amount: number | null;
+      commission_rate: number | null;
+      commission_amount: number | null;
     };
 
     const weddJoin = `
@@ -187,7 +188,9 @@ export async function GET(request: NextRequest) {
           fi.Card_Div       AS card_div,
           @category         AS category,
           fi.CardSet_Price AS item_amount,
-          cs.payment_amount
+          cs.payment_amount,
+          COALESCE(c.feeRate, 0)                                    AS commission_rate,
+          FLOOR(cs.payment_amount * COALESCE(c.feeRate, 0) / 100.0) AS commission_amount
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN cat_slice cs ON cs.order_seq = o.order_seq
@@ -221,7 +224,9 @@ export async function GET(request: NextRequest) {
           fi.Card_Div       AS card_div,
           ${firstItemCategoryExpr} AS category,
           fi.CardSet_Price AS item_amount,
-          o.last_total_price AS payment_amount
+          o.last_total_price AS payment_amount,
+          COALESCE(c.feeRate, 0)                                          AS commission_rate,
+          FLOOR(o.last_total_price * COALESCE(c.feeRate, 0) / 100.0)      AS commission_amount
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         OUTER APPLY (
@@ -261,8 +266,11 @@ export async function GET(request: NextRequest) {
     const rows = result.recordset.map((r) => {
       const paymentAmount = Number(r.payment_amount ?? 0);
       const itemAmount = Number(r.item_amount ?? 0);
-      const ratePct = getCommissionRate(r.company_seq);
-      const commission = calcCommission(paymentAmount, ratePct);
+      // commission_rate / commission_amount come from SQL (per-company
+      // COMPANY.feeRate). Same source the on-screen list uses, so the CSV
+      // and the screen agree row-for-row.
+      const ratePct = Number(r.commission_rate ?? 0);
+      const commission = Number(r.commission_amount ?? 0);
       const couple = [r.groom_name, r.bride_name]
         .map((x) => (x ?? "").trim())
         .filter(Boolean)

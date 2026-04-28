@@ -3,7 +3,6 @@ import sql from "mssql";
 import { getMssqlPool } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { brandName } from "@/lib/brand";
-import { getCommissionRate, calcCommission } from "@/lib/commission";
 import { categoryCaseSql, Category } from "@/lib/category";
 
 /**
@@ -249,6 +248,11 @@ export async function GET(request: NextRequest) {
       category: Category;
       item_amount: number | null;
       payment_amount: number | null;
+      // Resolved per-company from COMPANY.feeRate (NULL → 0). Computed in
+      // SQL so the row total and the summary aggregation share one source
+      // of truth without a JS-side N+1 lookup.
+      commission_rate: number | null;
+      commission_amount: number | null;
     };
 
     const weddJoin = `
@@ -298,7 +302,11 @@ export async function GET(request: NextRequest) {
           fi.Card_Div       AS card_div,
           @category         AS category,
           fi.CardSet_Price AS item_amount,
-          cs.payment_amount
+          cs.payment_amount,
+          -- Per-company contract rate. NULL feeRate (inactive partners that
+          -- somehow surface) defaults to 0% so we never invent a payout.
+          COALESCE(c.feeRate, 0)                                    AS commission_rate,
+          FLOOR(cs.payment_amount * COALESCE(c.feeRate, 0) / 100.0) AS commission_amount
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN cat_slice cs ON cs.order_seq = o.order_seq
@@ -337,7 +345,9 @@ export async function GET(request: NextRequest) {
           fi.Card_Div       AS card_div,
           ${firstItemCategoryExpr} AS category,
           fi.CardSet_Price AS item_amount,
-          o.last_total_price AS payment_amount
+          o.last_total_price AS payment_amount,
+          COALESCE(c.feeRate, 0)                                          AS commission_rate,
+          FLOOR(o.last_total_price * COALESCE(c.feeRate, 0) / 100.0)      AS commission_amount
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         OUTER APPLY (
@@ -356,10 +366,6 @@ export async function GET(request: NextRequest) {
     }
 
     const settlements = listResult.recordset.map((r) => {
-      const itemAmount = Number(r.item_amount ?? 0);
-      const paymentAmount = Number(r.payment_amount ?? 0);
-      const ratePct = getCommissionRate(r.company_seq);
-      const commission = calcCommission(paymentAmount, ratePct);
       const couple = [r.groom_name, r.bride_name]
         .map((x) => (x ?? "").trim())
         .filter(Boolean)
@@ -383,31 +389,56 @@ export async function GET(request: NextRequest) {
         card_brand: brandName(r.card_brand),
         card_div: r.card_div ?? null,
         category: r.category,
-        item_amount: itemAmount,
-        payment_amount: paymentAmount,
-        commission_rate: ratePct,
-        commission_amount: commission,
+        item_amount: Number(r.item_amount ?? 0),
+        payment_amount: Number(r.payment_amount ?? 0),
+        commission_rate: Number(r.commission_rate ?? 0),
+        commission_amount: Number(r.commission_amount ?? 0),
       };
     });
 
     const filteredTotal = category ? byCategory[category].orders : totalOrders;
 
     // ─── 총 정산금액 ────────────────────────────────────────────────
-    // 정산금액 = 매출 × 수수료율. The base shifts with the active category
-    // tab so the headline matches what's in the list:
-    //   invitation tab → SUM(invitation slices)
-    //   thankyou tab   → SUM(thankyou items)
-    //   goods tab      → SUM(goods items)
-    //   전체 (admin)   → SUM(last_total_price)
-    // Single rate today (env DEFAULT_COMMISSION_RATE). Once COMPANY.feeRate
-    // is wired per-company, swap this for a per-company SQL aggregation.
-    let commissionBase: number;
-    if (category === "invitation") commissionBase = byCategory.invitation.sales;
-    else if (category === "thankyou") commissionBase = byCategory.thankyou.sales;
-    else if (category === "goods") commissionBase = byCategory.goods.sales;
-    else commissionBase = totalSales;
-    const summaryRatePct = getCommissionRate(0);
-    const totalCommissionPaid = calcCommission(commissionBase, summaryRatePct);
+    // 정산금액 = 매출 × COMPANY.feeRate. Computed per-company so partners
+    // with different contract rates (10 / 13 / 15 / 5.5 / 23 / ...) all
+    // contribute correctly to the headline. Slice base depends on the
+    // active tab to mirror the list:
+    //   invitation tab → ltp - tya_items - gds_items
+    //   thankyou tab   → tya_items
+    //   goods tab      → gds_items
+    //   전체 (admin)   → ltp
+    // FLOOR per-row before summing, matching the per-row commission_amount
+    // we display. NULL feeRate (inactive partners) defaults to 0%.
+    const commissionResult = await req.query<{ total_commission: number | null }>(`
+      WITH ${orderCatsCte}
+      SELECT COALESCE(SUM(FLOOR(
+        CASE
+          WHEN @category = 'invitation' THEN (oc.ltp - oc.tya_items - oc.gds_items)
+          WHEN @category = 'thankyou'   THEN oc.tya_items
+          WHEN @category = 'goods'      THEN oc.gds_items
+          ELSE oc.ltp
+        END
+        * COALESCE(cc.feeRate, 0) / 100.0
+      )), 0) AS total_commission
+      FROM order_cats oc
+      JOIN custom_order o2 ON o2.order_seq = oc.order_seq
+      JOIN COMPANY cc      ON cc.COMPANY_SEQ = o2.company_seq
+      WHERE 1 = 1
+        ${
+          category === "invitation"
+            ? "AND oc.has_inv = 1"
+            : category === "thankyou"
+            ? "AND oc.has_tya = 1"
+            : category === "goods"
+            ? "AND oc.has_gds = 1"
+            : user.isAdmin
+            ? ""
+            : "AND oc.has_inv = 1"
+        }
+    `);
+    const totalCommissionPaid = Number(
+      commissionResult.recordset[0]?.total_commission ?? 0
+    );
 
     return NextResponse.json({
       settlements,
