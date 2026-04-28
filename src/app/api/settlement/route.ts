@@ -168,6 +168,10 @@ export async function GET(request: NextRequest) {
     // the goods / thankyou / invitation rule (lib/category.ts) is honored
     // in both directions: categorisation here matches what the list query
     // displays in the "분류" column.
+    // has_premium_inv = 1 when any A01 item in the order has CardBrand='P'
+    // (프리미어페이퍼). Used by every aggregate (overall / per-category /
+    // 정산금액 합계) AND the row-level filter so the headline cards and
+    // the list always reconcile under the productKind filter.
     const orderCatsCte = `
       order_cats AS (
         SELECT
@@ -178,7 +182,8 @@ export async function GET(request: NextRequest) {
           SUM(CASE WHEN ${itemCategoryExpr} = 'goods'      THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS gds_items,
           MAX(CASE WHEN ${itemCategoryExpr} = 'invitation' THEN 1 ELSE 0 END) AS has_inv,
           MAX(CASE WHEN ${itemCategoryExpr} = 'thankyou'   THEN 1 ELSE 0 END) AS has_tya,
-          MAX(CASE WHEN ${itemCategoryExpr} = 'goods'      THEN 1 ELSE 0 END) AS has_gds
+          MAX(CASE WHEN ${itemCategoryExpr} = 'goods'      THEN 1 ELSE 0 END) AS has_gds,
+          MAX(CASE WHEN sc.Card_Div = 'A01' AND sc.CardBrand = 'S' THEN 1 ELSE 0 END) AS has_premium_inv
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN custom_order_item oi ON oi.order_seq = o.order_seq
@@ -188,9 +193,26 @@ export async function GET(request: NextRequest) {
       )
     `;
 
+    // Order-level productKind clause shared by every aggregate. Applied
+    // against order_cats columns: an order is premium if it carries any
+    // A01 item with CardBrand='P'; regular otherwise (must still have an
+    // invitation — orders with no A01 fall out under either kind). Mirrors
+    // the user's mental model: "이 주문은 프리미어페이퍼 청첩장 주문이냐".
+    // Prefix arg supports queries that alias order_cats (e.g. "oc.").
+    const productKindWhere = (prefix = ""): string | null => {
+      if (productKind === "premium") return `${prefix}has_premium_inv = 1`;
+      if (productKind === "regular")
+        return `${prefix}has_inv = 1 AND ${prefix}has_premium_inv = 0`;
+      return null;
+    };
+    const productKindClause = productKindWhere();
+
     // ─── Overall summary (order-level) ───────────────────────────────
     // For non-admin, restrict to orders with invitation items.
     const overallExtraFilter = user.isAdmin ? "" : "AND has_inv = 1";
+    const overallProductKindFilter = productKindClause
+      ? `AND ${productKindClause}`
+      : "";
     const overallResult = await req.query<{
       total_orders: number;
       total_sales: number | null;
@@ -200,7 +222,7 @@ export async function GET(request: NextRequest) {
         COUNT(*) AS total_orders,
         COALESCE(SUM(ltp), 0) AS total_sales
       FROM order_cats
-      WHERE 1 = 1 ${overallExtraFilter}
+      WHERE 1 = 1 ${overallExtraFilter} ${overallProductKindFilter}
     `);
 
     const overall = overallResult.recordset[0];
@@ -210,6 +232,16 @@ export async function GET(request: NextRequest) {
     // ─── Per-category summary ────────────────────────────────────────
     // invitation sales use the new slice formula; thankyou/goods stay
     // at their own items (fees unattributed for orders without 청첩장).
+    // The two filters (admin/partner scope + productKind) compose into a
+    // single WHERE clause. We always emit a WHERE so a downstream change
+    // to either dimension stays mechanical.
+    const summaryClauses: string[] = [];
+    if (!user.isAdmin) summaryClauses.push("has_inv = 1");
+    if (productKindClause) summaryClauses.push(productKindClause);
+    const summaryWhere = summaryClauses.length
+      ? `WHERE ${summaryClauses.join(" AND ")}`
+      : "";
+
     const summaryResult = await req.query<{
       inv_orders: number;
       inv_sales: number | null;
@@ -227,7 +259,7 @@ export async function GET(request: NextRequest) {
         SUM(CASE WHEN has_gds = 1 THEN 1 ELSE 0 END) AS gds_orders,
         COALESCE(SUM(gds_items), 0) AS gds_sales
       FROM order_cats
-      ${user.isAdmin ? "" : "WHERE has_inv = 1"}
+      ${summaryWhere}
     `);
 
     const s = summaryResult.recordset[0];
@@ -304,6 +336,8 @@ export async function GET(request: NextRequest) {
         cat_slice AS (
           SELECT
             order_seq,
+            has_inv,
+            has_premium_inv,
             CASE
               WHEN @category = 'invitation' THEN ltp - tya_items - gds_items
               WHEN @category = 'thankyou'   THEN tya_items
@@ -365,13 +399,16 @@ export async function GET(request: NextRequest) {
         ${weddJoin}
         WHERE
           (@productKind IS NULL)
-          OR (@productKind = 'premium' AND fi.CardBrand = 'P')
-          OR (@productKind = 'regular' AND (fi.CardBrand IS NULL OR fi.CardBrand <> 'P'))
+          OR (@productKind = 'premium' AND cs.has_premium_inv = 1)
+          OR (@productKind = 'regular' AND cs.has_inv = 1 AND cs.has_premium_inv = 0)
         ORDER BY o.src_send_date DESC, o.order_seq DESC
         OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
       `);
     } else {
+      // 전체 branch — joins order_cats so productKind filter uses the same
+      // order-level definition (has_premium_inv) as the headline summary.
       listResult = await req.query<ListRow>(`
+        WITH ${orderCatsCte}
         SELECT
           o.order_seq,
           c.COMPANY_SEQ     AS company_seq,
@@ -401,6 +438,7 @@ export async function GET(request: NextRequest) {
           o.order_add_flag
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
+        JOIN order_cats oc ON oc.order_seq = o.order_seq
         OUTER APPLY (
           -- First item overall (전체 tab). See comment above on CardSet_Price.
           SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, sc.CardSet_Price
@@ -413,8 +451,8 @@ export async function GET(request: NextRequest) {
         WHERE ${sharedFilters}
           AND (
             (@productKind IS NULL)
-            OR (@productKind = 'premium' AND fi.CardBrand = 'P')
-            OR (@productKind = 'regular' AND (fi.CardBrand IS NULL OR fi.CardBrand <> 'P'))
+            OR (@productKind = 'premium' AND oc.has_premium_inv = 1)
+            OR (@productKind = 'regular' AND oc.has_inv = 1 AND oc.has_premium_inv = 0)
           )
         ORDER BY o.src_send_date DESC, o.order_seq DESC
         OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
@@ -500,6 +538,7 @@ export async function GET(request: NextRequest) {
             ? ""
             : "AND oc.has_inv = 1"
         }
+        ${productKindWhere("oc.") ? `AND ${productKindWhere("oc.")}` : ""}
     `);
     const totalCommissionPaid = Number(
       commissionResult.recordset[0]?.total_commission ?? 0

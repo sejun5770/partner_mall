@@ -206,7 +206,8 @@ export async function GET(request: NextRequest) {
           SUM(CASE WHEN ${itemCategoryExpr} = 'goods'      THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS gds_items,
           MAX(CASE WHEN ${itemCategoryExpr} = 'invitation' THEN 1 ELSE 0 END) AS has_inv,
           MAX(CASE WHEN ${itemCategoryExpr} = 'thankyou'   THEN 1 ELSE 0 END) AS has_tya,
-          MAX(CASE WHEN ${itemCategoryExpr} = 'goods'      THEN 1 ELSE 0 END) AS has_gds
+          MAX(CASE WHEN ${itemCategoryExpr} = 'goods'      THEN 1 ELSE 0 END) AS has_gds,
+          MAX(CASE WHEN sc.Card_Div = 'A01' AND sc.CardBrand = 'S' THEN 1 ELSE 0 END) AS has_premium_inv
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN custom_order_item oi ON oi.order_seq = o.order_seq
@@ -215,6 +216,14 @@ export async function GET(request: NextRequest) {
         GROUP BY o.order_seq
       )
     `;
+
+    // Same productKind clause helper as /api/settlement.
+    const productKindWhere = (prefix = ""): string | null => {
+      if (productKind === "premium") return `${prefix}has_premium_inv = 1`;
+      if (productKind === "regular")
+        return `${prefix}has_inv = 1 AND ${prefix}has_premium_inv = 0`;
+      return null;
+    };
 
     // Common SELECT projection (everything the new column set needs).
     const projection = `
@@ -257,6 +266,8 @@ export async function GET(request: NextRequest) {
         cat_slice AS (
           SELECT
             order_seq,
+            has_inv,
+            has_premium_inv,
             CASE
               WHEN @category = 'invitation' THEN ltp - tya_items - gds_items
               WHEN @category = 'thankyou'   THEN tya_items
@@ -280,8 +291,7 @@ export async function GET(request: NextRequest) {
               THEN FLOOR(cs.payment_amount / 1.1)
             ELSE 0
           END                                                       AS supply_amount,
-          o.up_order_seq,
-          o.order_add_flag
+          o.up_order_seq
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN cat_slice cs ON cs.order_seq = o.order_seq
@@ -296,12 +306,13 @@ export async function GET(request: NextRequest) {
         ${weddJoin}
         WHERE
           (@productKind IS NULL)
-          OR (@productKind = 'premium' AND fi.CardBrand = 'P')
-          OR (@productKind = 'regular' AND (fi.CardBrand IS NULL OR fi.CardBrand <> 'P'))
+          OR (@productKind = 'premium' AND cs.has_premium_inv = 1)
+          OR (@productKind = 'regular' AND cs.has_inv = 1 AND cs.has_premium_inv = 0)
         ORDER BY o.src_send_date DESC, o.order_seq DESC
       `);
     } else {
       result = await req.query<ExportRow>(`
+        WITH ${orderCatsCte}
         SELECT
           ${projection},
           ${firstItemCategoryExpr} AS category,
@@ -314,10 +325,10 @@ export async function GET(request: NextRequest) {
               THEN FLOOR(o.last_total_price / 1.1)
             ELSE 0
           END                                                             AS supply_amount,
-          o.up_order_seq,
-          o.order_add_flag
+          o.up_order_seq
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
+        JOIN order_cats oc ON oc.order_seq = o.order_seq
         OUTER APPLY (
           SELECT TOP 1 sc.Card_Code, sc.CardBrand, sc.Card_Div, sc.CardSet_Price, oi.item_count
           FROM custom_order_item oi
@@ -329,8 +340,8 @@ export async function GET(request: NextRequest) {
         WHERE ${sharedFilters}
           AND (
             (@productKind IS NULL)
-            OR (@productKind = 'premium' AND fi.CardBrand = 'P')
-            OR (@productKind = 'regular' AND (fi.CardBrand IS NULL OR fi.CardBrand <> 'P'))
+            OR (@productKind = 'premium' AND oc.has_premium_inv = 1)
+            OR (@productKind = 'regular' AND oc.has_inv = 1 AND oc.has_premium_inv = 0)
           )
         ORDER BY o.src_send_date DESC, o.order_seq DESC
       `);
