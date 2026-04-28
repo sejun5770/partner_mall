@@ -89,6 +89,10 @@ export async function GET(request: NextRequest) {
   const productKind: "regular" | "premium" | null =
     rawKind === "regular" || rawKind === "premium" ? rawKind : null;
 
+  // 환불 여부: 'only' = 환불이 발생한 (refund_after_send > 0) 행만 노출.
+  //   shipped 행 with period refund + refund-only 행 둘 다 포함됨.
+  const refundFilter = searchParams.get("refundFilter") === "only" ? "only" : null;
+
   const category: Category | null = user.isAdmin ? requestedCategory : "invitation";
 
   // Date range resolution
@@ -279,11 +283,20 @@ export async function GET(request: NextRequest) {
     };
     const productKindClause = productKindWhere();
 
+    // 환불 발생 주문만 보기 — restricts every aggregate and the row list to
+    // rows where the order had any post-shipment refund inside the period.
+    const refundFilterWhere = (prefix = ""): string | null =>
+      refundFilter === "only" ? `${prefix}refund_after_send > 0` : null;
+    const refundFilterClause = refundFilterWhere();
+
     // ─── Overall summary (order-level) ───────────────────────────────
     // For non-admin, restrict to orders with invitation items.
     const overallExtraFilter = user.isAdmin ? "" : "AND has_inv = 1";
     const overallProductKindFilter = productKindClause
       ? `AND ${productKindClause}`
+      : "";
+    const overallRefundFilter = refundFilterClause
+      ? `AND ${refundFilterClause}`
       : "";
     const overallResult = await req.query<{
       total_orders: number;
@@ -294,7 +307,7 @@ export async function GET(request: NextRequest) {
         COUNT(*) AS total_orders,
         COALESCE(SUM(ltp), 0) AS total_sales
       FROM order_cats
-      WHERE 1 = 1 ${overallExtraFilter} ${overallProductKindFilter}
+      WHERE 1 = 1 ${overallExtraFilter} ${overallProductKindFilter} ${overallRefundFilter}
     `);
 
     const overall = overallResult.recordset[0];
@@ -310,6 +323,7 @@ export async function GET(request: NextRequest) {
     const summaryClauses: string[] = [];
     if (!user.isAdmin) summaryClauses.push("has_inv = 1");
     if (productKindClause) summaryClauses.push(productKindClause);
+    if (refundFilterClause) summaryClauses.push(refundFilterClause);
     const summaryWhere = summaryClauses.length
       ? `WHERE ${summaryClauses.join(" AND ")}`
       : "";
@@ -438,12 +452,13 @@ export async function GET(request: NextRequest) {
             END AS payment_amount
           FROM order_cats
           WHERE
-            (is_refund_only = 1 AND @category = 'invitation' AND has_inv = 1)
-            OR (is_refund_only = 0 AND (
-              (@category = 'invitation' AND has_inv = 1)
-              OR (@category = 'thankyou'   AND has_tya = 1)
-              OR (@category = 'goods'      AND has_gds = 1)
-            ))
+            ((is_refund_only = 1 AND @category = 'invitation' AND has_inv = 1)
+              OR (is_refund_only = 0 AND (
+                (@category = 'invitation' AND has_inv = 1)
+                OR (@category = 'thankyou'   AND has_tya = 1)
+                OR (@category = 'goods'      AND has_gds = 1)
+              )))
+            ${refundFilterClause ? `AND ${refundFilterClause}` : ""}
         )
         SELECT
           o.order_seq,
@@ -578,6 +593,7 @@ export async function GET(request: NextRequest) {
             OR (@productKind = 'premium' AND oc.has_premium_inv = 1)
             OR (@productKind = 'regular' AND oc.has_inv = 1 AND oc.has_premium_inv = 0)
           )
+          ${refundFilterWhere("oc.") ? `AND ${refundFilterWhere("oc.")}` : ""}
         ORDER BY o.src_send_date DESC, o.order_seq DESC
         OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
       `);
@@ -672,6 +688,7 @@ export async function GET(request: NextRequest) {
             : "AND oc.has_inv = 1"
         }
         ${productKindWhere("oc.") ? `AND ${productKindWhere("oc.")}` : ""}
+        ${refundFilterWhere("oc.") ? `AND ${refundFilterWhere("oc.")}` : ""}
     `);
     const totalCommissionPaid = Number(
       commissionResult.recordset[0]?.total_commission ?? 0

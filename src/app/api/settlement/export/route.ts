@@ -57,6 +57,8 @@ export async function GET(request: NextRequest) {
   const productKind: "regular" | "premium" | null =
     rawKind === "regular" || rawKind === "premium" ? rawKind : null;
 
+  const refundFilter = searchParams.get("refundFilter") === "only" ? "only" : null;
+
   const category: Category | null = user.isAdmin ? requestedCategory : "invitation";
 
   let startDate: string;
@@ -345,12 +347,13 @@ export async function GET(request: NextRequest) {
             END AS payment_amount
           FROM order_cats
           WHERE
-            (is_refund_only = 1 AND @category = 'invitation' AND has_inv = 1)
-            OR (is_refund_only = 0 AND (
-              (@category = 'invitation' AND has_inv = 1)
-              OR (@category = 'thankyou'   AND has_tya = 1)
-              OR (@category = 'goods'      AND has_gds = 1)
-            ))
+            ((is_refund_only = 1 AND @category = 'invitation' AND has_inv = 1)
+              OR (is_refund_only = 0 AND (
+                (@category = 'invitation' AND has_inv = 1)
+                OR (@category = 'thankyou'   AND has_tya = 1)
+                OR (@category = 'goods'      AND has_gds = 1)
+              )))
+            ${refundFilter === "only" ? "AND refund_after_send > 0" : ""}
         )
         SELECT
           ${projection},
@@ -433,6 +436,7 @@ export async function GET(request: NextRequest) {
             OR (@productKind = 'premium' AND oc.has_premium_inv = 1)
             OR (@productKind = 'regular' AND oc.has_inv = 1 AND oc.has_premium_inv = 0)
           )
+          ${refundFilter === "only" ? "AND oc.refund_after_send > 0" : ""}
         ORDER BY o.src_send_date DESC, o.order_seq DESC
       `);
     }

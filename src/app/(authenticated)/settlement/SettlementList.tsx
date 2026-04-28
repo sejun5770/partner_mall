@@ -115,6 +115,8 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
   // 제품구분: '' = 전체, 'regular' = 일반청첩장, 'premium' = 고급청첩장
   // (premium = first item CardBrand='P' / 프리미어페이퍼)
   const [productKind, setProductKind] = useState<"" | "regular" | "premium">("");
+  // 환불 여부: '' = 전체, 'only' = 환불 발생 주문만
+  const [refundFilter, setRefundFilter] = useState<"" | "only">("");
 
   // Order-detail modal state
   const [openOrderSeq, setOpenOrderSeq] = useState<number | null>(null);
@@ -143,6 +145,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
     if (isAdmin && partnerNameSearch) params.set("partnerName", partnerNameSearch);
     if (plannerNameSearch.trim()) params.set("plannerName", plannerNameSearch.trim());
     if (productKind) params.set("productKind", productKind);
+    if (refundFilter) params.set("refundFilter", refundFilter);
     if (categoryTab !== "all") params.set("category", categoryTab);
     params.set("dateBasis", dateBasis);
 
@@ -171,6 +174,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
     partnerNameSearch,
     plannerNameSearch,
     productKind,
+    refundFilter,
     categoryTab,
     dateBasis,
   ]);
@@ -193,6 +197,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
     if (isAdmin && partnerNameSearch) params.set("partnerName", partnerNameSearch);
     if (plannerNameSearch.trim()) params.set("plannerName", plannerNameSearch.trim());
     if (productKind) params.set("productKind", productKind);
+    if (refundFilter) params.set("refundFilter", refundFilter);
     if (categoryTab !== "all") params.set("category", categoryTab);
     params.set("dateBasis", dateBasis);
     window.location.href = `/api/settlement/export?${params}`;
@@ -213,6 +218,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
     setPartnerNameSearch("");
     setPlannerNameSearch("");
     setProductKind("");
+    setRefundFilter("");
     setCategoryTab(isAdmin ? "all" : "invitation");
     setDateBasis("order");
     setPage(1);
@@ -297,7 +303,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
             />
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <label className="w-24 text-sm font-medium text-slate-700">제품구분</label>
             <select
               value={productKind}
@@ -305,11 +311,24 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                 setProductKind(e.target.value as "" | "regular" | "premium");
                 setPage(1);
               }}
-              className="h-9 w-48 rounded border border-slate-300 bg-white px-2 text-sm"
+              className="h-9 w-40 rounded border border-slate-300 bg-white px-2 text-sm"
             >
               <option value="">전체</option>
               <option value="regular">일반청첩장</option>
               <option value="premium">고급청첩장</option>
+            </select>
+
+            <span className="ml-2 text-sm font-medium text-slate-700">환불 여부</span>
+            <select
+              value={refundFilter}
+              onChange={(e) => {
+                setRefundFilter(e.target.value as "" | "only");
+                setPage(1);
+              }}
+              className="h-9 w-40 rounded border border-slate-300 bg-white px-2 text-sm"
+            >
+              <option value="">전체</option>
+              <option value="only">환불 발생만</option>
             </select>
           </div>
 
