@@ -114,6 +114,11 @@ export async function GET(request: NextRequest) {
       order_add_flag: string | null;
       pg_resultinfo: string | null;
       pg_resultinfo2: string | null;
+      // FLOOR(last_total_price / 1.1) when the order is processed in-house
+      // (OUTSOURCING_TYPE IS NULL); 0 for outsourced orders that don't carry
+      // VAT through Barunson's books. Computed in SQL to match the legacy
+      // accounting workbook's split.
+      supply_amount: number | null;
       // Pre-formatted YYYY-MM-DD strings to avoid timezone drift.
       order_date_str: string | null;
       send_date_str: string | null;
@@ -200,6 +205,11 @@ export async function GET(request: NextRequest) {
       -- like the simple-pay provider (카카오페이) or card auth number.
       o.pg_resultinfo,
       o.pg_resultinfo2,
+      CASE
+        WHEN o.OUTSOURCING_TYPE IS NULL
+          THEN FLOOR(o.last_total_price / 1.1)
+        ELSE 0
+      END AS supply_amount,
       CONVERT(VARCHAR(10), o.order_date,      23) AS order_date_str,
       CONVERT(VARCHAR(10), o.src_send_date,   23) AS send_date_str,
       CONVERT(VARCHAR(10), o.src_cancel_date, 23) AS cancel_date_str,
@@ -385,7 +395,7 @@ export async function GET(request: NextRequest) {
         결제정보,                                     // 결제정보
         String(lastTotal),                            // PG결제금액
         String(lastTotal),                            // 결제금액
-        "0",                                          // 공급가액 (미매핑)
+        String(Number(r.supply_amount ?? 0)),         // 공급가액 (자체 처리 = last/1.1, 외주 = 0)
         String(lastTotal),                            // 최종금액
         `${ratePct}%`,                                // 수수료
         String(commission),                           // 정산금액 (= 결제금액 × 수수료율)
