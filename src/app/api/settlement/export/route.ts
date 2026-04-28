@@ -101,16 +101,28 @@ export async function GET(request: NextRequest) {
 
     // Mirrors the list endpoint — see /api/settlement/route.ts for the
     // full rationale on each clause (cancelled / trouble / excluded
-    // partner accounts).
-    const sharedFilters = `
+    // partner accounts) and the refund-only widening below.
+    const shippedInPeriodExpr = `(${dateColumn} >= @startDate AND ${dateColumn} < @endDateExcl)`;
+    const baseSharedFilters = `
       o.src_send_date IS NOT NULL
-        AND ${dateColumn} >= @startDate
-        AND ${dateColumn} <  @endDateExcl
         AND c.LOGIN_ID NOT IN ('s2_barunsoncard', 'deardeer', 's2_storyoflove')
         AND o.trouble_type = '0'
         AND (@companySeq IS NULL OR o.company_seq = @companySeq)
         AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
         AND (@plannerNameLike IS NULL OR o.card_opt LIKE @plannerNameLike)
+    `;
+    const sharedFilters = `
+      ${baseSharedFilters}
+        AND ${shippedInPeriodExpr}
+    `;
+    const refundInPeriodExists = `
+      EXISTS (
+        SELECT 1 FROM custom_order_refund r
+        WHERE r.order_seq = o.order_seq
+          AND TRY_CAST(r.refund_date AS DATE) >= CAST(o.src_send_date AS DATE)
+          AND TRY_CAST(r.refund_date AS DATE) >= @startDate
+          AND TRY_CAST(r.refund_date AS DATE) <  @endDateExcl
+      )
     `;
 
     type ExportRow = {
@@ -240,9 +252,15 @@ export async function GET(request: NextRequest) {
       order_cats AS (
         SELECT
           o.order_seq,
-          MAX(o.last_total_price) - MAX(ISNULL(rf.refund_after_send, 0)) AS ltp,
+          MAX(CASE WHEN ${shippedInPeriodExpr} THEN 0 ELSE 1 END) AS is_refund_only,
           MAX(o.last_total_price) AS gross_ltp,
           MAX(ISNULL(rf.refund_after_send, 0)) AS refund_after_send,
+          CASE
+            WHEN MAX(CASE WHEN ${shippedInPeriodExpr} THEN 1 ELSE 0 END) = 1
+              THEN MAX(o.last_total_price) - MAX(ISNULL(rf.refund_after_send, 0))
+            ELSE
+              -MAX(ISNULL(rf.refund_after_send, 0))
+          END AS ltp,
           SUM(CASE WHEN ${itemCategoryExpr} = 'invitation' THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS inv_items,
           SUM(CASE WHEN ${itemCategoryExpr} = 'thankyou'   THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS tya_items,
           SUM(CASE WHEN ${itemCategoryExpr} = 'goods'      THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS gds_items,
@@ -255,7 +273,8 @@ export async function GET(request: NextRequest) {
         JOIN custom_order_item oi ON oi.order_seq = o.order_seq
         JOIN S2_Card sc ON sc.Card_Seq = oi.card_seq
         ${refundJoin}
-        WHERE ${sharedFilters}
+        WHERE ${baseSharedFilters}
+          AND (${shippedInPeriodExpr} OR ${refundInPeriodExists})
         GROUP BY o.order_seq
       )
     `;
@@ -311,17 +330,27 @@ export async function GET(request: NextRequest) {
             order_seq,
             has_inv,
             has_premium_inv,
+            is_refund_only,
             refund_after_send,
             CASE
-              WHEN @category = 'invitation' THEN ltp - tya_items - gds_items
-              WHEN @category = 'thankyou'   THEN tya_items
-              WHEN @category = 'goods'      THEN gds_items
-              ELSE 0
+              WHEN is_refund_only = 1 THEN
+                CASE WHEN @category = 'invitation' THEN -refund_after_send ELSE 0 END
+              ELSE
+                CASE
+                  WHEN @category = 'invitation' THEN ltp - tya_items - gds_items
+                  WHEN @category = 'thankyou'   THEN tya_items
+                  WHEN @category = 'goods'      THEN gds_items
+                  ELSE 0
+                END
             END AS payment_amount
           FROM order_cats
-          WHERE (@category = 'invitation' AND has_inv = 1)
-             OR (@category = 'thankyou'   AND has_tya = 1)
-             OR (@category = 'goods'      AND has_gds = 1)
+          WHERE
+            (is_refund_only = 1 AND @category = 'invitation' AND has_inv = 1)
+            OR (is_refund_only = 0 AND (
+              (@category = 'invitation' AND has_inv = 1)
+              OR (@category = 'thankyou'   AND has_tya = 1)
+              OR (@category = 'goods'      AND has_gds = 1)
+            ))
         )
         SELECT
           ${projection},
@@ -398,7 +427,7 @@ export async function GET(request: NextRequest) {
         ) fi
         ${sikgwonJoin}
         ${weddJoin}
-        WHERE ${sharedFilters}
+        WHERE ${baseSharedFilters}
           AND (
             (@productKind IS NULL)
             OR (@productKind = 'premium' AND oc.has_premium_inv = 1)
