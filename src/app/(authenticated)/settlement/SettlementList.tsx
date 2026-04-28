@@ -457,10 +457,10 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
         </section>
       )}
 
-      {/* Totals — three cards: 총 결제금액 (left), 총 정산금액 (middle),
-          총 환불금액 (right). 총 주문건수 is dropped because the list's
-          전체 / 청첩장 tabs effectively show the same count for partner
-          mall settlement. */}
+      {/* Totals — three cards: 총 결제금액 (left), 총 환불금액 (middle),
+          총 정산금액 (right). The previous order put 정산금액 right after
+          환불금액 which read like the settlement was being reduced by the
+          refund — flipping fixes the visual confusion. */}
       {summary && (
         <section className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <SummaryCard
@@ -469,14 +469,15 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
             tone="positive"
           />
           <SummaryCard
-            label="총 정산금액"
-            value={`${summary.total_commission_paid.toLocaleString()} 원`}
-            tone="positive"
-          />
-          <SummaryCard
             label="총 환불금액"
             value={`${summary.total_refund.toLocaleString()} 원`}
             tone="negative"
+          />
+          <SummaryCard
+            label="총 정산금액"
+            value={`${summary.total_commission_paid.toLocaleString()} 원`}
+            tone="positive"
+            tooltip="(총 결제금액 − 총 환불금액) × 수수료율"
           />
         </section>
       )}
@@ -607,7 +608,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                             className="mr-1 inline-flex h-4 items-center rounded px-1 text-[10px] font-bold ring-1 bg-rose-100 text-rose-700 ring-rose-200"
                             title="기간 외 발송 주문의 환불 정산 (이전 월 발송, 이번 월 환불예정일)"
                           >
-                            환불정산
+                            환불
                           </span>
                         )}
                         {s.order_prefix && (
@@ -715,16 +716,29 @@ function SummaryCard({
   label,
   value,
   tone,
+  tooltip,
 }: {
   label: string;
   value: string;
   tone?: "positive" | "negative";
+  tooltip?: string;
 }) {
   const valueColor =
     tone === "negative" ? "text-rose-600" : tone === "positive" ? "text-emerald-700" : "text-slate-900";
   return (
     <div className="rounded-2xl bg-white ring-1 ring-slate-100 p-4 shadow-sm">
-      <div className="text-xs font-medium text-slate-500">{label}</div>
+      <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
+        <span>{label}</span>
+        {tooltip && (
+          <span
+            className="inline-flex h-3.5 w-3.5 cursor-help items-center justify-center rounded-full bg-slate-200 text-[9px] font-bold text-slate-600 hover:bg-slate-300"
+            title={tooltip}
+            aria-label={tooltip}
+          >
+            ?
+          </span>
+        )}
+      </div>
       <div className={`mt-1 text-xl font-bold ${valueColor}`}>{value}</div>
     </div>
   );

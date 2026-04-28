@@ -236,10 +236,23 @@ export default function OrderDetailModal({
                 </div>
                 <div>
                   <p className="text-xs font-medium text-slate-500">최종 결제금액</p>
-                  <p className="mt-0.5 text-2xl font-bold text-emerald-700">
-                    {fmtAmount(data.payment.last_total_price)}
-                    <span className="ml-0.5 text-sm font-normal text-slate-400">원</span>
-                  </p>
+                  {data.refund_total > 0 ? (
+                    // 환불이 있는 경우: 결제금액(-환불금액) net을 빨간색으로
+                    <>
+                      <p className="mt-0.5 text-2xl font-bold text-rose-700">
+                        {fmtAmount(data.payment.last_total_price - data.refund_total)}
+                        <span className="ml-0.5 text-sm font-normal text-slate-400">원</span>
+                      </p>
+                      <p className="text-[11px] text-rose-600">
+                        결제 {fmtAmount(data.payment.last_total_price)}원 − 환불 {fmtAmount(data.refund_total)}원
+                      </p>
+                    </>
+                  ) : (
+                    <p className="mt-0.5 text-2xl font-bold text-emerald-700">
+                      {fmtAmount(data.payment.last_total_price)}
+                      <span className="ml-0.5 text-sm font-normal text-slate-400">원</span>
+                    </p>
+                  )}
                   {category && data.payment.full_last_total_price !== data.payment.last_total_price && (
                     <p className="text-[11px] text-slate-400">
                       전체 주문 결제: {fmtAmount(data.payment.full_last_total_price)}원
@@ -275,75 +288,80 @@ export default function OrderDetailModal({
                   )}
                 </Section>
 
-                <Section title="결제 정보">
-                  <dl className="space-y-2 text-sm">
-                    <Pair k="결제방법">
-                      {data.payment.method ? (
-                        <span className="inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200">
-                          {data.payment.method}
-                        </span>
-                      ) : (
-                        "-"
-                      )}
-                    </Pair>
-                    {data.payment.detail && (
-                      <Pair k="결제정보">
-                        <span className="text-slate-700">{data.payment.detail}</span>
-                      </Pair>
-                    )}
-                    <Pair k="PG 결제액">{fmtAmount(data.payment.pg_amount)}원</Pair>
-                    <Pair k="결제일">{fmtDateOnly(data.dates.ap_at) || fmtDateOnly(data.dates.order_at)}</Pair>
-                    <Pair k="주문취소일">{data.dates.cancel_at ? fmtDateOnly(data.dates.cancel_at) : "-"}</Pair>
-                  </dl>
-                </Section>
-              </div>
-
-              {/* 환불 정보 — separate card, only when refunds exist for this
-                   order. Each entry shows 환불금액 / 환불예정일 / 사유. */}
-              {data.refunds && data.refunds.length > 0 && (
-                <section className="rounded-xl border border-rose-200 bg-rose-50/40 p-4">
-                  <header className="mb-3 flex items-center justify-between">
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-rose-700">
-                      환불 정보
-                    </h3>
-                    <div className="text-right">
-                      <span className="text-[11px] text-rose-600">
-                        총 {data.refunds.length}건
-                      </span>
-                      <span className="ml-2 text-sm font-bold text-rose-700">
-                        −{fmtAmount(data.refund_total)}원
-                      </span>
-                    </div>
-                  </header>
-                  <ul className="space-y-2">
-                    {data.refunds.map((r, idx) => (
-                      <li
-                        key={idx}
-                        className="rounded-md bg-white px-3 py-2 ring-1 ring-rose-100 text-sm"
-                      >
-                        <div className="flex items-baseline justify-between gap-3">
-                          <span className="font-semibold text-rose-700">
-                            −{fmtAmount(r.price)}원
+                {/* Right column: 결제 정보 + 환불 정보 stacked. Putting
+                    the refund card into the empty space below 결제 정보
+                    keeps the modal compact instead of pushing it below
+                    the 주문 상품 list (which is taller). */}
+                <div className="space-y-4">
+                  <Section title="결제 정보">
+                    <dl className="space-y-2 text-sm">
+                      <Pair k="결제방법">
+                        {data.payment.method ? (
+                          <span className="inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200">
+                            {data.payment.method}
                           </span>
-                          <span className="text-xs text-slate-500">
-                            환불예정일 {r.refund_date || "-"}
-                          </span>
-                        </div>
-                        {r.message && (
-                          <p className="mt-1 whitespace-pre-line text-xs text-slate-600">
-                            {r.message}
-                          </p>
+                        ) : (
+                          "-"
                         )}
-                        <div className="mt-1 flex items-center gap-3 text-[11px] text-slate-400">
-                          {r.reg_at && <span>접수 {fmtDateOnly(r.reg_at)}</span>}
-                          {r.admin_id && <span>· {r.admin_id}</span>}
-                          {r.type_code && <span>· 코드 {r.type_code}</span>}
+                      </Pair>
+                      {data.payment.detail && (
+                        <Pair k="결제정보">
+                          <span className="text-slate-700">{data.payment.detail}</span>
+                        </Pair>
+                      )}
+                      <Pair k="PG 결제액">{fmtAmount(data.payment.pg_amount)}원</Pair>
+                      <Pair k="결제일">{fmtDateOnly(data.dates.ap_at) || fmtDateOnly(data.dates.order_at)}</Pair>
+                      <Pair k="주문취소일">{data.dates.cancel_at ? fmtDateOnly(data.dates.cancel_at) : "-"}</Pair>
+                    </dl>
+                  </Section>
+
+                  {/* 환불 정보 — only when refunds exist for this order. */}
+                  {data.refunds && data.refunds.length > 0 && (
+                    <section className="rounded-xl border border-rose-200 bg-rose-50/40 p-4">
+                      <header className="mb-3 flex items-center justify-between">
+                        <h3 className="text-xs font-semibold uppercase tracking-wide text-rose-700">
+                          환불 정보
+                        </h3>
+                        <div className="text-right">
+                          <span className="text-[11px] text-rose-600">
+                            총 {data.refunds.length}건
+                          </span>
+                          <span className="ml-2 text-sm font-bold text-rose-700">
+                            −{fmtAmount(data.refund_total)}원
+                          </span>
                         </div>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              )}
+                      </header>
+                      <ul className="space-y-2">
+                        {data.refunds.map((r, idx) => (
+                          <li
+                            key={idx}
+                            className="rounded-md bg-white px-3 py-2 ring-1 ring-rose-100 text-sm"
+                          >
+                            <div className="flex items-baseline justify-between gap-3">
+                              <span className="font-semibold text-rose-700">
+                                −{fmtAmount(r.price)}원
+                              </span>
+                              <span className="text-xs text-slate-500">
+                                환불예정일 {r.refund_date || "-"}
+                              </span>
+                            </div>
+                            {r.message && (
+                              <p className="mt-1 whitespace-pre-line text-xs text-slate-600">
+                                {r.message}
+                              </p>
+                            )}
+                            <div className="mt-1 flex items-center gap-3 text-[11px] text-slate-400">
+                              {r.reg_at && <span>접수 {fmtDateOnly(r.reg_at)}</span>}
+                              {r.admin_id && <span>· {r.admin_id}</span>}
+                              {r.type_code && <span>· 코드 {r.type_code}</span>}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  )}
+                </div>
+              </div>
 
               {/* Process timeline */}
               <Section title="처리 진행">
