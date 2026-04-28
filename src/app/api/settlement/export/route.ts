@@ -158,12 +158,32 @@ export async function GET(request: NextRequest) {
       // up_order_seq + order_add_flag distinguish 일반 / [기] / [수].
       // (order_add_flag is already declared above.)
       up_order_seq: number | null;
+      // 식권 합계 (Card_Code LIKE 'DDA%' OR 'FST%') for the order. The
+      // operations report's 최종금액 column is last_total_price minus this
+      // — verified against legacy: 200,885,911 - 2,772,200 = 198,113,711.
+      sikgwon_amount: number | null;
     };
 
     // WeddInfo subquery — also builds the YYYY-MM-DD wedding date from
     // event_year/month/Day so the timezone-conversion problem we hit on
     // src_send_date doesn't recur. Months/days may be unpadded ('6', '20')
     // in the source — RIGHT('0' + ..., 2) zero-pads.
+    // Per-order 식권 sum. Used by the "최종금액" column in the operations
+    // accounting workbook (= 결제금액 minus 식권금액). Identifying rule:
+    // Card_Code starts with 'DDA' or 'FST' (신랑식권 / 신부식권 / Kids
+    // Meal etc.). Verified against bar_shop1 — sum of these line-items
+    // across 2026-04 admin scope = 2,772,200, exactly the legacy 최종금액
+    // delta vs SUM(last_total_price).
+    const sikgwonJoin = `
+      OUTER APPLY (
+        SELECT COALESCE(SUM(oi2.item_sale_price * oi2.item_count), 0) AS sikgwon_amount
+        FROM custom_order_item oi2
+        JOIN S2_Card sc2 ON sc2.Card_Seq = oi2.card_seq
+        WHERE oi2.order_seq = o.order_seq
+          AND (sc2.Card_Code LIKE 'DDA%' OR sc2.Card_Code LIKE 'FST%')
+      ) sk
+    `;
+
     const weddJoin = `
       OUTER APPLY (
         SELECT TOP 1
@@ -291,7 +311,8 @@ export async function GET(request: NextRequest) {
               THEN FLOOR(cs.payment_amount / 1.1)
             ELSE 0
           END                                                       AS supply_amount,
-          o.up_order_seq
+          o.up_order_seq,
+          sk.sikgwon_amount
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN cat_slice cs ON cs.order_seq = o.order_seq
@@ -308,6 +329,7 @@ export async function GET(request: NextRequest) {
             CASE WHEN oi.order_seq = o.order_seq THEN 0 ELSE 1 END,
             oi.id ASC
         ) fi
+        ${sikgwonJoin}
         ${weddJoin}
         WHERE
           (@productKind IS NULL)
@@ -330,7 +352,8 @@ export async function GET(request: NextRequest) {
               THEN FLOOR(o.last_total_price / 1.1)
             ELSE 0
           END                                                             AS supply_amount,
-          o.up_order_seq
+          o.up_order_seq,
+          sk.sikgwon_amount
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN order_cats oc ON oc.order_seq = o.order_seq
@@ -346,6 +369,7 @@ export async function GET(request: NextRequest) {
             CASE WHEN oi.order_seq = o.order_seq THEN 0 ELSE 1 END,
             oi.id ASC
         ) fi
+        ${sikgwonJoin}
         ${weddJoin}
         WHERE ${sharedFilters}
           AND (
@@ -413,6 +437,8 @@ export async function GET(request: NextRequest) {
       const commission = Number(r.commission_amount ?? 0);
       const itemUnit = Number(r.item_amount ?? 0);
       const itemCnt = Number(r.item_count ?? 0);
+      const sikgwon = Number(r.sikgwon_amount ?? 0);
+      const finalAmount = lastTotal - sikgwon;
       const { prefix: orderPrefix, method: addMethod } = classifyAddition(
         r.up_order_seq,
         r.order_add_flag
@@ -435,7 +461,7 @@ export async function GET(request: NextRequest) {
         String(lastTotal),                            // PG결제금액
         String(lastTotal),                            // 결제금액
         String(Number(r.supply_amount ?? 0)),         // 공급가액 (자체 처리 = last/1.1, 외주 = 0)
-        String(lastTotal),                            // 최종금액
+        String(finalAmount),                          // 최종금액 = 결제금액 - 식권금액
         `${ratePct}%`,                                // 수수료
         String(commission),                           // 정산금액 (= 결제금액 × 수수료율)
         r.order_name ?? "",                           // 주문자명
