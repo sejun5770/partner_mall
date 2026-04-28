@@ -652,13 +652,21 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                       <Td align="right">
                         {s.supply_amount > 0 ? s.supply_amount.toLocaleString() : DASH}
                       </Td>
-                      <Td align="right">{s.payment_amount.toLocaleString()}</Td>
+                      {/* When the row carries a 환불 deduction (either net-of-refund
+                          shipped row or refund-only offset row), render 결제금액 and
+                          정산금액 in rose so partners can spot the affected rows. */}
+                      <Td
+                        align="right"
+                        className={s.refund_after_send > 0 ? "text-rose-600" : ""}
+                      >
+                        {s.payment_amount.toLocaleString()}
+                      </Td>
                       <Td align="right">{s.commission_rate}%</Td>
                       <Td
                         align="right"
                         className={
                           "font-semibold " +
-                          (s.commission_amount < 0
+                          (s.commission_amount < 0 || s.refund_after_send > 0
                             ? "text-rose-600"
                             : "text-emerald-700")
                         }

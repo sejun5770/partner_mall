@@ -140,6 +140,36 @@ export async function GET(
         ORDER BY oi.id
       `);
 
+    // Refunds (환불 기록) — entire history for this order. Surfaces as a
+    // dedicated card in the modal so partners can audit each refund event.
+    // refund_date is stored as varchar; pass through as-is and let the
+    // client format. reg_date (datetime) is the actual operations input
+    // timestamp — distinct from refund_date which is the 환불예정일.
+    const refundsResult = await pool
+      .request()
+      .input("orderSeq", sql.Int, orderSeq)
+      .query<{
+        refund_price: number | null;
+        refund_date: string | null;
+        refund_msg: string | null;
+        refund_gubun: string | null;
+        refund_type_code: string | null;
+        admin_id: string | null;
+        reg_at: string | null;
+      }>(`
+        SELECT
+          refund_price,
+          refund_date,
+          refund_msg,
+          refund_gubun,
+          REFUND_TYPE_CODE AS refund_type_code,
+          admin_id,
+          CONVERT(VARCHAR(19), reg_date, 120) AS reg_at
+        FROM custom_order_refund
+        WHERE order_seq = @orderSeq
+        ORDER BY id ASC
+      `);
+
     // Drafts (초안정보) — only rows that actually have a draft uploaded.
     // 봉투 / 부속품 entries live in custom_order_plist too but with
     // choan_date NULL; the legacy portal hides those.
@@ -188,6 +218,18 @@ export async function GET(
       title: (d.title ?? "").trim(),
       choan_at: d.choan_at,
     }));
+
+    const refunds = refundsResult.recordset.map((r) => ({
+      price: Number(r.refund_price ?? 0),
+      // refund_date in DB is the 환불예정일 (planned refund date).
+      refund_date: (r.refund_date ?? "").trim(),
+      message: (r.refund_msg ?? "").trim(),
+      gubun: (r.refund_gubun ?? "").trim(),
+      type_code: (r.refund_type_code ?? "").trim(),
+      admin_id: (r.admin_id ?? "").trim(),
+      reg_at: r.reg_at,
+    }));
+    const refundTotal = refunds.reduce((sum, r) => sum + r.price, 0);
 
     // DELIVERY_METHOD: 1 = 택배 (≈100% of partner-mall orders). Other codes
     // (0/2 etc.) appear so rarely in this DB that we leave them as raw
@@ -326,6 +368,9 @@ export async function GET(
 
       drafts,
       shipping,
+
+      refunds,
+      refund_total: refundTotal,
     });
   } catch (error) {
     console.error("Order detail fetch error:", error);
