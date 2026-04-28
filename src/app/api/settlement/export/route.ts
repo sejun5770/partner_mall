@@ -4,6 +4,7 @@ import { getMssqlPool } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { brandName } from "@/lib/brand";
 import { categoryCaseSql, Category } from "@/lib/category";
+import { classifyPayment } from "@/lib/payment";
 
 /**
  * GET /api/settlement/export
@@ -333,49 +334,9 @@ export async function GET(request: NextRequest) {
       goods: "기념굿즈",
     };
 
-    // Payment method classifier. Reads the real PG result fields:
-    //   pg_resultinfo  — bank/card name or "간편결제 <provider>"
-    //   pg_resultinfo2 — extra context (auth number, simple-pay provider)
-    //
-    // Live distribution of shipped 2026-04 orders:
-    //   신용카드          1559   (NH농협카드 / KB국민카드 / VISA …)
-    //   간편결제          1416   (간편결제 네이버페이 / 카카오페이 …)
-    //   가상계좌           602   (은행 + 계좌번호 + 입금자명)
-    //   실시간계좌이체     229   (은행 only, no account)
-    //
-    // Heuristics — checked against the bar_shop1 distribution; ordering
-    // matters (간편결제 wins over 카드 because a card number is often the
-    // funding source for a simple-pay).
-    function classifyPayment(
-      info: string | null,
-      info2: string | null
-    ): { method: string; detail: string } {
-      const a = (info ?? "").trim();
-      const b = (info2 ?? "").trim();
-      const detail = [a, b].filter(Boolean).join(" ").trim();
-      const both = `${a} ${b}`;
-
-      if (
-        a.startsWith("간편결제") ||
-        /(?:네이버페이|카카오페이|토스페이|페이코|SSGPAY|애플페이|삼성페이|LPAY|KPAY)/.test(both)
-      ) {
-        return { method: "간편결제", detail };
-      }
-      if (/카드/.test(a) || /^(?:VISA|MASTER|AMEX|JCB)/i.test(a)) {
-        return { method: "신용카드", detail };
-      }
-      // Bank-rail families.
-      if (/(?:은행|뱅크|신협|새마을금고|우체국)/.test(a)) {
-        // 가상계좌: long account number AND a Korean depositor name in
-        // pg_resultinfo (e.g. "iM뱅크 9600804499517 권민희"). Plain bank
-        // name only ("KB국민은행") = 실시간계좌이체.
-        if (/\d{10,}/.test(a) && /[가-힣]+\s*$/.test(a)) {
-          return { method: "가상계좌", detail };
-        }
-        return { method: "실시간계좌이체", detail };
-      }
-      return { method: detail ? "기타" : "", detail };
-    }
+    // Payment classification (간편결제 / 신용카드 / 가상계좌 / 실시간계좌이체)
+    // — see @/lib/payment.ts. Shared with the order detail modal route so
+    // both surfaces label payments identically.
 
     function additionMethod(flag: string | null): string {
       const v = (flag ?? "").trim().toUpperCase();

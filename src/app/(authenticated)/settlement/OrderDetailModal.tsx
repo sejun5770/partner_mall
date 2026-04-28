@@ -42,7 +42,10 @@ interface OrderDetail {
     hphone: string;
   };
   payment: {
-    pay_type: string;
+    /** Classified rail (간편결제 / 신용카드 / 가상계좌 / 실시간계좌이체 / 기타) */
+    method: string;
+    /** Raw PG detail string (e.g., "롯데카드 20145108", "간편결제 네이버페이") */
+    detail: string;
     pg_amount: number;
     last_total_price: number;
     item_total: number;
@@ -68,22 +71,6 @@ interface OrderDetail {
   items: OrderItem[];
   drafts: DraftEntry[];
   shipping: ShippingInfo | null;
-}
-
-const PAY_TYPE_LABEL: Record<string, string> = {
-  C: "신용카드",
-  R: "실시간계좌이체",
-  V: "가상계좌",
-  M: "휴대폰",
-  S: "간편결제",
-  P: "포인트",
-  K: "카카오페이",
-  N: "네이버페이",
-};
-
-function payTypeLabel(code: string): string {
-  if (!code) return "-";
-  return PAY_TYPE_LABEL[code.trim().toUpperCase()] ?? code;
 }
 
 function fmtAmount(n: number | null | undefined): string {
@@ -279,10 +266,19 @@ export default function OrderDetailModal({
                 <Section title="결제 정보">
                   <dl className="space-y-2 text-sm">
                     <Pair k="결제방법">
-                      <span className="inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200">
-                        {payTypeLabel(data.payment.pay_type)}
-                      </span>
+                      {data.payment.method ? (
+                        <span className="inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200">
+                          {data.payment.method}
+                        </span>
+                      ) : (
+                        "-"
+                      )}
                     </Pair>
+                    {data.payment.detail && (
+                      <Pair k="결제정보">
+                        <span className="text-slate-700">{data.payment.detail}</span>
+                      </Pair>
+                    )}
                     <Pair k="PG 결제액">{fmtAmount(data.payment.pg_amount)}원</Pair>
                     <Pair k="결제일">{fmtDateOnly(data.dates.ap_at) || fmtDateOnly(data.dates.order_at)}</Pair>
                     <Pair k="주문취소일">{data.dates.cancel_at ? fmtDateOnly(data.dates.cancel_at) : "-"}</Pair>

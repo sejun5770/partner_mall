@@ -3,6 +3,7 @@ import sql from "mssql";
 import { getMssqlPool } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { classifyCard, Category } from "@/lib/category";
+import { classifyPayment } from "@/lib/payment";
 
 /**
  * GET /api/settlement/order/:orderSeq
@@ -67,7 +68,8 @@ export async function GET(
         order_phone: string | null;
         order_hphone: string | null;
         order_etc_comment: string | null;
-        pay_Type: string | null;
+        pg_resultinfo: string | null;
+        pg_resultinfo2: string | null;
         order_total_price: number | null;
         last_total_price: number | null;
         order_date_str: string | null;
@@ -89,7 +91,10 @@ export async function GET(
           o.order_phone,
           o.order_hphone,
           o.order_etc_comment,
-          o.pay_Type,
+          -- pay_Type is ~100% '0' for partner-flow orders (no signal); the
+          -- real method/provider lives on pg_resultinfo / pg_resultinfo2.
+          o.pg_resultinfo,
+          o.pg_resultinfo2,
           o.order_total_price,
           o.last_total_price,
           CONVERT(VARCHAR(19), o.order_date,        120) AS order_date_str,
@@ -290,7 +295,9 @@ export async function GET(
       },
 
       payment: {
-        pay_type: order.pay_Type ?? "",
+        // 결제방법/정보 derived from PG result fields — shared lib so the
+        // export and the modal label payments identically.
+        ...classifyPayment(order.pg_resultinfo, order.pg_resultinfo2),
         // pg_amount and last_total_price reflect the SLICE in category mode
         // so the modal mirrors the tab's perspective. full_* is the order's
         // untouched total, only exposed to admins.
