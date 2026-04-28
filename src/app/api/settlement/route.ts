@@ -265,6 +265,12 @@ export async function GET(request: NextRequest) {
       // of truth without a JS-side N+1 lookup.
       commission_rate: number | null;
       commission_amount: number | null;
+      // Up-order linkage + add-flag distinguish 일반 / [기] / [수]:
+      //   up_order_seq IS NULL                              → 일반
+      //   up_order_seq IS NOT NULL AND order_add_flag='0'   → [기] 추가주문
+      //   up_order_seq IS NOT NULL AND order_add_flag='1'   → [수] 추가주문 초안수정
+      up_order_seq: number | null;
+      order_add_flag: string | null;
       // 공급가액 = FLOOR(payment_amount / 1.1) when the order is processed
       // in-house (OUTSOURCING_TYPE IS NULL); 0 for outsourced orders that
       // don't carry VAT through Barunson's books. Computed on the displayed
@@ -329,7 +335,9 @@ export async function GET(request: NextRequest) {
             WHEN o.OUTSOURCING_TYPE IS NULL
               THEN FLOOR(cs.payment_amount / 1.1)
             ELSE 0
-          END                                                       AS supply_amount
+          END                                                       AS supply_amount,
+          o.up_order_seq,
+          o.order_add_flag
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN cat_slice cs ON cs.order_seq = o.order_seq
@@ -375,7 +383,9 @@ export async function GET(request: NextRequest) {
             WHEN o.OUTSOURCING_TYPE IS NULL
               THEN FLOOR(o.last_total_price / 1.1)
             ELSE 0
-          END                                                             AS supply_amount
+          END                                                             AS supply_amount,
+          o.up_order_seq,
+          o.order_add_flag
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         OUTER APPLY (
@@ -398,6 +408,13 @@ export async function GET(request: NextRequest) {
         .map((x) => (x ?? "").trim())
         .filter(Boolean)
         .join(",");
+      // 일반 / [기] / [수] prefix — see ListRow comment for the rule.
+      const orderPrefix =
+        r.up_order_seq && r.up_order_seq > 0
+          ? (r.order_add_flag ?? "").trim() === "1"
+            ? "수"
+            : "기"
+          : null;
       return {
         order_seq: r.order_seq,
         company_seq: r.company_seq,
@@ -422,6 +439,7 @@ export async function GET(request: NextRequest) {
         commission_rate: Number(r.commission_rate ?? 0),
         commission_amount: Number(r.commission_amount ?? 0),
         supply_amount: Number(r.supply_amount ?? 0),
+        order_prefix: orderPrefix,
       };
     });
 

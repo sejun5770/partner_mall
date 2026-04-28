@@ -150,6 +150,9 @@ export async function GET(request: NextRequest) {
       payment_amount: number | null;
       commission_rate: number | null;
       commission_amount: number | null;
+      // up_order_seq + order_add_flag distinguish 일반 / [기] / [수].
+      // (order_add_flag is already declared above.)
+      up_order_seq: number | null;
     };
 
     // WeddInfo subquery — also builds the YYYY-MM-DD wedding date from
@@ -271,7 +274,9 @@ export async function GET(request: NextRequest) {
             WHEN o.OUTSOURCING_TYPE IS NULL
               THEN FLOOR(cs.payment_amount / 1.1)
             ELSE 0
-          END                                                       AS supply_amount
+          END                                                       AS supply_amount,
+          o.up_order_seq,
+          o.order_add_flag
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN cat_slice cs ON cs.order_seq = o.order_seq
@@ -299,7 +304,9 @@ export async function GET(request: NextRequest) {
             WHEN o.OUTSOURCING_TYPE IS NULL
               THEN FLOOR(o.last_total_price / 1.1)
             ELSE 0
-          END                                                             AS supply_amount
+          END                                                             AS supply_amount,
+          o.up_order_seq,
+          o.order_add_flag
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         OUTER APPLY (
@@ -343,10 +350,18 @@ export async function GET(request: NextRequest) {
     // — see @/lib/payment.ts. Shared with the order detail modal route so
     // both surfaces label payments identically.
 
-    function additionMethod(flag: string | null): string {
-      const v = (flag ?? "").trim().toUpperCase();
-      // order_add_flag 'Y' is observed on follow-on (추가) orders.
-      return v === "Y" ? "추가주문" : "";
+    // 추가방법 + 주문번호 prefix derived from up_order_seq + order_add_flag:
+    //   up_order_seq IS NULL                            → 일반   (empty)
+    //   up_order_seq IS NOT NULL AND order_add_flag='0' → [기] / 추가주문
+    //   up_order_seq IS NOT NULL AND order_add_flag='1' → [수] / 추가주문 초안수정
+    function classifyAddition(
+      upOrderSeq: number | null,
+      flag: string | null
+    ): { prefix: string; method: string } {
+      if (!upOrderSeq || upOrderSeq <= 0) return { prefix: "", method: "" };
+      const v = (flag ?? "").trim();
+      if (v === "1") return { prefix: "[수]", method: "추가주문 초안수정" };
+      return { prefix: "[기]", method: "추가주문" };
     }
 
     const rows = result.recordset.map((r) => {
@@ -363,15 +378,19 @@ export async function GET(request: NextRequest) {
       const commission = Number(r.commission_amount ?? 0);
       const itemUnit = Number(r.item_amount ?? 0);
       const itemCnt = Number(r.item_count ?? 0);
+      const { prefix: orderPrefix, method: addMethod } = classifyAddition(
+        r.up_order_seq,
+        r.order_add_flag
+      );
 
       return [
-        String(r.order_seq),                          // 주문번호
+        `${orderPrefix}${r.order_seq}`,               // 주문번호 (e.g., [기]4733633)
         r.erp_part_code ?? "",                        // 부서
         r.login_id ?? "",                             // 제휴사ID
         r.company_name ?? "",                         // 제휴사
         r.mng_nm ?? "",                               // 담당자
         (r.planner_name ?? "").trim(),                // 플래너명
-        additionMethod(r.order_add_flag),             // 추가방법
+        addMethod,                                    // 추가방법
         r.order_date_str ?? "",                       // 주문일
         r.order_date_str ?? "",                       // 결제일 (instant PG = 주문일)
         r.send_date_str ?? "",                        // 배송일

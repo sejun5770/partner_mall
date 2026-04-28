@@ -31,6 +31,8 @@ interface Settlement {
   // 부가세 분리 공급가액 = floor(payment / 1.1) for in-house orders, 0 for
   // outsourced. Mirrors the Excel export.
   supply_amount: number;
+  // [기] = 추가주문 (재인쇄), [수] = 추가주문 + 초안수정. null = 일반.
+  order_prefix: "기" | "수" | null;
 }
 
 interface CategoryStat {
@@ -554,6 +556,23 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                       {showPartnerCols && <Td>{s.login_id}</Td>}
                       {showPartnerCols && <Td>{s.company_name}</Td>}
                       <Td>
+                        {s.order_prefix && (
+                          <span
+                            className={
+                              "mr-1 inline-flex h-4 items-center rounded px-1 text-[10px] font-bold ring-1 " +
+                              (s.order_prefix === "수"
+                                ? "bg-amber-50 text-amber-700 ring-amber-200"
+                                : "bg-slate-100 text-slate-600 ring-slate-200")
+                            }
+                            title={
+                              s.order_prefix === "수"
+                                ? "추가주문 (초안 수정)"
+                                : "추가주문 (재인쇄)"
+                            }
+                          >
+                            {s.order_prefix}
+                          </span>
+                        )}
                         <button
                           type="button"
                           onClick={() => setOpenOrderSeq(s.order_seq)}
