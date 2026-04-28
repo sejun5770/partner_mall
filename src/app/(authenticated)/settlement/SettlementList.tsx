@@ -33,6 +33,11 @@ interface Settlement {
   supply_amount: number;
   // [기] = 추가주문 (재인쇄), [수] = 추가주문 + 초안수정. null = 일반.
   order_prefix: "기" | "수" | null;
+  // True when this row is a 환불 상계 entry — order shipped before the
+  // current period but its refund 환불예정일 falls in this period. Such
+  // rows show payment_amount / commission_amount as negative offsets.
+  is_refund_only: boolean;
+  refund_after_send: number;
 }
 
 interface CategoryStat {
@@ -575,12 +580,25 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                   // Dates come pre-formatted YYYY-MM-DD from the server — display as-is
                   // to avoid JS Date timezone conversion (browser's local TZ shifted
                   // shipments one day forward).
+                  // Refund-only rows use a tinted background + 환불정산 badge so
+                  // the negative offset is unmistakable.
+                  const rowClass = s.is_refund_only
+                    ? "bg-rose-50/40 hover:bg-rose-50"
+                    : "hover:bg-slate-50";
                   return (
-                    <tr key={s.order_seq} className="hover:bg-slate-50">
+                    <tr key={`${s.order_seq}-${s.is_refund_only ? "rf" : "n"}`} className={rowClass}>
                       <Td>{total - (page - 1) * pageSize - idx}</Td>
                       {showPartnerCols && <Td>{s.login_id}</Td>}
                       {showPartnerCols && <Td>{s.company_name}</Td>}
                       <Td>
+                        {s.is_refund_only && (
+                          <span
+                            className="mr-1 inline-flex h-4 items-center rounded px-1 text-[10px] font-bold ring-1 bg-rose-100 text-rose-700 ring-rose-200"
+                            title="기간 외 발송 주문의 환불 정산 (이전 월 발송, 이번 월 환불예정일)"
+                          >
+                            환불정산
+                          </span>
+                        )}
                         {s.order_prefix && (
                           <span
                             className={
@@ -636,7 +654,15 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                       </Td>
                       <Td align="right">{s.payment_amount.toLocaleString()}</Td>
                       <Td align="right">{s.commission_rate}%</Td>
-                      <Td align="right" className="font-semibold text-emerald-700">
+                      <Td
+                        align="right"
+                        className={
+                          "font-semibold " +
+                          (s.commission_amount < 0
+                            ? "text-rose-600"
+                            : "text-emerald-700")
+                        }
+                      >
                         {s.commission_amount.toLocaleString()}
                       </Td>
                     </tr>

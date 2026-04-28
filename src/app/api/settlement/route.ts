@@ -153,15 +153,37 @@ export async function GET(request: NextRequest) {
     // settlement (e.g. directwedding lost 4 orders for the 2026-04 period
     // vs the legacy portal). src_send_date IS NOT NULL alone is sufficient
     // — true refunded orders never get a send_date.
-    const sharedFilters = `
+    // Date predicate broken out so order_cats can use a widened version
+    // (shipped-in-period OR has-period-refund) while other queries that
+    // need just the shipped scope can still reuse the strict variant.
+    const shippedInPeriodExpr = `(${dateColumn} >= @startDate AND ${dateColumn} < @endDateExcl)`;
+
+    const baseSharedFilters = `
       o.src_send_date IS NOT NULL
-        AND ${dateColumn} >= @startDate
-        AND ${dateColumn} <  @endDateExcl
         AND c.LOGIN_ID NOT IN ('s2_barunsoncard', 'deardeer', 's2_storyoflove')
         AND o.trouble_type = '0'
         AND (@companySeq IS NULL OR o.company_seq = @companySeq)
         AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
         AND (@plannerNameLike IS NULL OR o.card_opt LIKE @plannerNameLike)
+    `;
+
+    const sharedFilters = `
+      ${baseSharedFilters}
+        AND ${shippedInPeriodExpr}
+    `;
+
+    // Inclusion test for an order with refund_date in the current period.
+    // Mirrors the refundJoin but lives outside it as an EXISTS condition
+    // so we can include orders shipped in earlier months whose refund
+    // 환불예정일 falls in the current period (the May-blanc case).
+    const refundInPeriodExists = `
+      EXISTS (
+        SELECT 1 FROM custom_order_refund r
+        WHERE r.order_seq = o.order_seq
+          AND TRY_CAST(r.refund_date AS DATE) >= CAST(o.src_send_date AS DATE)
+          AND TRY_CAST(r.refund_date AS DATE) >= @startDate
+          AND TRY_CAST(r.refund_date AS DATE) <  @endDateExcl
+      )
     `;
 
     // Per-order item-category sums. Uses categoryCaseSql so any change to
@@ -200,13 +222,31 @@ export async function GET(request: NextRequest) {
     // ltp here is the post-refund effective amount: (last_total_price - refund_after_send).
     // Every downstream aggregate (slices / commission / supply) treats
     // this as the settlement base, fixing the legacy over-payment bug.
+    // order_cats includes BOTH:
+    //   shipped-in-period orders        (is_refund_only = 0)
+    //   shipped-earlier orders that have a refund 환불예정일 in this period
+    //                                   (is_refund_only = 1) — these surface
+    //                                   as offset rows so partners can see
+    //                                   the May-blanc-style 상계처리.
+    //
+    // ltp is the order's NET contribution to this period's settlement:
+    //   shipped-in-period   → gross_ltp - refund_after_send
+    //   refund-only         → -refund_after_send  (offset against earlier
+    //                          period's already-paid commission)
     const orderCatsCte = `
       order_cats AS (
         SELECT
           o.order_seq,
-          MAX(o.last_total_price) - MAX(ISNULL(rf.refund_after_send, 0)) AS ltp,
+          o.company_seq,
+          MAX(CASE WHEN ${shippedInPeriodExpr} THEN 0 ELSE 1 END) AS is_refund_only,
           MAX(o.last_total_price) AS gross_ltp,
           MAX(ISNULL(rf.refund_after_send, 0)) AS refund_after_send,
+          CASE
+            WHEN MAX(CASE WHEN ${shippedInPeriodExpr} THEN 1 ELSE 0 END) = 1
+              THEN MAX(o.last_total_price) - MAX(ISNULL(rf.refund_after_send, 0))
+            ELSE
+              -MAX(ISNULL(rf.refund_after_send, 0))
+          END AS ltp,
           SUM(CASE WHEN ${itemCategoryExpr} = 'invitation' THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS inv_items,
           SUM(CASE WHEN ${itemCategoryExpr} = 'thankyou'   THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS tya_items,
           SUM(CASE WHEN ${itemCategoryExpr} = 'goods'      THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS gds_items,
@@ -219,8 +259,9 @@ export async function GET(request: NextRequest) {
         JOIN custom_order_item oi ON oi.order_seq = o.order_seq
         JOIN S2_Card sc ON sc.Card_Seq = oi.card_seq
         ${refundJoin}
-        WHERE ${sharedFilters}
-        GROUP BY o.order_seq
+        WHERE ${baseSharedFilters}
+          AND (${shippedInPeriodExpr} OR ${refundInPeriodExists})
+        GROUP BY o.order_seq, o.company_seq
       )
     `;
 
@@ -284,11 +325,17 @@ export async function GET(request: NextRequest) {
       WITH ${orderCatsCte}
       SELECT
         SUM(CASE WHEN has_inv = 1 THEN 1 ELSE 0 END) AS inv_orders,
-        COALESCE(SUM(CASE WHEN has_inv = 1 THEN ltp - tya_items - gds_items ELSE 0 END), 0) AS inv_sales,
-        SUM(CASE WHEN has_tya = 1 THEN 1 ELSE 0 END) AS tya_orders,
-        COALESCE(SUM(tya_items), 0) AS tya_sales,
-        SUM(CASE WHEN has_gds = 1 THEN 1 ELSE 0 END) AS gds_orders,
-        COALESCE(SUM(gds_items), 0) AS gds_sales
+        COALESCE(SUM(
+          CASE
+            WHEN is_refund_only = 1 AND has_inv = 1 THEN -refund_after_send
+            WHEN is_refund_only = 0 AND has_inv = 1 THEN ltp - tya_items - gds_items
+            ELSE 0
+          END
+        ), 0) AS inv_sales,
+        SUM(CASE WHEN is_refund_only = 0 AND has_tya = 1 THEN 1 ELSE 0 END) AS tya_orders,
+        COALESCE(SUM(CASE WHEN is_refund_only = 0 THEN tya_items ELSE 0 END), 0) AS tya_sales,
+        SUM(CASE WHEN is_refund_only = 0 AND has_gds = 1 THEN 1 ELSE 0 END) AS gds_orders,
+        COALESCE(SUM(CASE WHEN is_refund_only = 0 THEN gds_items ELSE 0 END), 0) AS gds_sales
       FROM order_cats
       ${summaryWhere}
     `);
@@ -349,6 +396,10 @@ export async function GET(request: NextRequest) {
       // payment_amount (slice when a category tab is active, ltp when 전체)
       // so the 결제금액 ↔ 공급가액 ratio reads cleanly per row.
       supply_amount: number | null;
+      // 1 when the row is a 환불-only offset for an order shipped before
+      // the period (e.g. May settlement showing 4월-shipped 5월-refunded).
+      is_refund_only: number | null;
+      refund_after_send: number | null;
     };
 
     const weddJoin = `
@@ -369,16 +420,30 @@ export async function GET(request: NextRequest) {
             order_seq,
             has_inv,
             has_premium_inv,
+            is_refund_only,
+            refund_after_send,
+            -- For refund-only rows the offset attaches to the invitation
+            -- tab only (refunds are practically all 청첩장-related); other
+            -- tabs return 0 so the row drops out.
             CASE
-              WHEN @category = 'invitation' THEN ltp - tya_items - gds_items
-              WHEN @category = 'thankyou'   THEN tya_items
-              WHEN @category = 'goods'      THEN gds_items
-              ELSE 0
+              WHEN is_refund_only = 1 THEN
+                CASE WHEN @category = 'invitation' THEN -refund_after_send ELSE 0 END
+              ELSE
+                CASE
+                  WHEN @category = 'invitation' THEN ltp - tya_items - gds_items
+                  WHEN @category = 'thankyou'   THEN tya_items
+                  WHEN @category = 'goods'      THEN gds_items
+                  ELSE 0
+                END
             END AS payment_amount
           FROM order_cats
-          WHERE (@category = 'invitation' AND has_inv = 1)
-             OR (@category = 'thankyou'   AND has_tya = 1)
-             OR (@category = 'goods'      AND has_gds = 1)
+          WHERE
+            (is_refund_only = 1 AND @category = 'invitation' AND has_inv = 1)
+            OR (is_refund_only = 0 AND (
+              (@category = 'invitation' AND has_inv = 1)
+              OR (@category = 'thankyou'   AND has_tya = 1)
+              OR (@category = 'goods'      AND has_gds = 1)
+            ))
         )
         SELECT
           o.order_seq,
@@ -411,7 +476,9 @@ export async function GET(request: NextRequest) {
             ELSE 0
           END                                                       AS supply_amount,
           o.up_order_seq,
-          o.order_add_flag
+          o.order_add_flag,
+          cs.is_refund_only,
+          cs.refund_after_send
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN cat_slice cs ON cs.order_seq = o.order_seq
@@ -471,8 +538,8 @@ export async function GET(request: NextRequest) {
           fi.Card_Div       AS card_div,
           ${firstItemCategoryExpr} AS category,
           fi.CardSet_Price AS item_amount,
-          -- payment_amount = last_total_price - 출고후 환불. Settles the
-          -- legacy bug where post-shipment refunds were ignored.
+          -- payment_amount = ltp from CTE = (shipped ? gross-refund : -refund).
+          -- Negative payment is the May-blanc-style 환불 상계 row.
           oc.ltp                                                          AS payment_amount,
           COALESCE(c.feeRate, 0)                                          AS commission_rate,
           FLOOR(oc.ltp * COALESCE(c.feeRate, 0) / 100.0)                  AS commission_amount,
@@ -482,7 +549,9 @@ export async function GET(request: NextRequest) {
             ELSE 0
           END                                                             AS supply_amount,
           o.up_order_seq,
-          o.order_add_flag
+          o.order_add_flag,
+          oc.is_refund_only,
+          oc.refund_after_send
         FROM custom_order o
         JOIN COMPANY c ON o.company_seq = c.COMPANY_SEQ
         JOIN order_cats oc ON oc.order_seq = o.order_seq
@@ -499,7 +568,11 @@ export async function GET(request: NextRequest) {
             oi.id ASC
         ) fi
         ${weddJoin}
-        WHERE ${sharedFilters}
+        -- baseSharedFilters only — order_cats already constrains by period
+        -- via the (shipped OR refund-in-period) widened filter, so we
+        -- mustn't AND the strict shipped-in-period filter again here or
+        -- refund-only rows drop out.
+        WHERE ${baseSharedFilters}
           AND (
             (@productKind IS NULL)
             OR (@productKind = 'premium' AND oc.has_premium_inv = 1)
@@ -522,6 +595,7 @@ export async function GET(request: NextRequest) {
             ? "수"
             : "기"
           : null;
+      const isRefundOnly = Number(r.is_refund_only ?? 0) === 1;
       return {
         order_seq: r.order_seq,
         company_seq: r.company_seq,
@@ -547,6 +621,8 @@ export async function GET(request: NextRequest) {
         commission_amount: Number(r.commission_amount ?? 0),
         supply_amount: Number(r.supply_amount ?? 0),
         order_prefix: orderPrefix,
+        is_refund_only: isRefundOnly,
+        refund_after_send: Number(r.refund_after_send ?? 0),
       };
     });
 
@@ -567,6 +643,12 @@ export async function GET(request: NextRequest) {
       WITH ${orderCatsCte}
       SELECT COALESCE(SUM(FLOOR(
         CASE
+          -- Refund-only rows attach to the invitation slice as -refund.
+          -- Other slices get 0 from refund-only orders (their items were
+          -- already counted in an earlier period).
+          WHEN oc.is_refund_only = 1 THEN
+            CASE WHEN @category IS NULL OR @category = 'invitation'
+                 THEN -oc.refund_after_send ELSE 0 END
           WHEN @category = 'invitation' THEN (oc.ltp - oc.tya_items - oc.gds_items)
           WHEN @category = 'thankyou'   THEN oc.tya_items
           WHEN @category = 'goods'      THEN oc.gds_items
@@ -582,9 +664,9 @@ export async function GET(request: NextRequest) {
           category === "invitation"
             ? "AND oc.has_inv = 1"
             : category === "thankyou"
-            ? "AND oc.has_tya = 1"
+            ? "AND oc.has_tya = 1 AND oc.is_refund_only = 0"
             : category === "goods"
-            ? "AND oc.has_gds = 1"
+            ? "AND oc.has_gds = 1 AND oc.is_refund_only = 0"
             : user.isAdmin
             ? ""
             : "AND oc.has_inv = 1"
