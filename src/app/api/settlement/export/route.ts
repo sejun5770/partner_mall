@@ -123,6 +123,9 @@ export async function GET(request: NextRequest) {
       groom_name: string | null;
       bride_name: string | null;
       wedd_name: string | null;
+      // 층/홀/실 (e.g., "1층 루비홀") — separate free-text input on the
+      // partner front order_Wdd.asp form, stored next to wedd_name.
+      wedd_place: string | null;
       wedd_date_str: string | null;
       ftype: string | null;
       card_code: string | null;
@@ -146,6 +149,7 @@ export async function GET(request: NextRequest) {
           wi.groom_name,
           wi.bride_name,
           wi.wedd_name,
+          wi.wedd_place,
           wi.ftype,
           CASE
             WHEN ISNULL(wi.event_year, '') = '' THEN NULL
@@ -204,6 +208,7 @@ export async function GET(request: NextRequest) {
       w.groom_name,
       w.bride_name,
       w.wedd_name,
+      w.wedd_place,
       w.wedd_date_str,
       w.ftype,
       fi.Card_Code      AS card_code,
@@ -392,7 +397,11 @@ export async function GET(request: NextRequest) {
         String(itemCnt),                              // 수량
         "-",                                          // 기타 (스펙 placeholder)
         r.wedd_date_str ?? "",                        // 예식일자
-        r.wedd_name ?? "",                            // 예식장
+        // 예식장 = wedd_name + " " + wedd_place (e.g., "호텔인터불고 원주 1층 루비홀")
+        [r.wedd_name, r.wedd_place]
+          .map((x) => (x ?? "").trim())
+          .filter(Boolean)
+          .join(" "),                                 // 예식장
         (r.ftype ?? "").trim(),                       // 예식구분
         "",                                           // 비고
         KUBUN_LABEL[r.category] ?? "",                // 구분
