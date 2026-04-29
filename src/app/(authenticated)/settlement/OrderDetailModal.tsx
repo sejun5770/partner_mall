@@ -228,11 +228,10 @@ export default function OrderDetailModal({
                     {fmtAmount(data.payment.item_total)}
                     <span className="ml-0.5 text-xs font-normal text-slate-400">원</span>
                   </p>
-                  {category && data.payment.full_item_total !== data.payment.item_total && (
-                    <p className="text-[11px] text-slate-400">
-                      전체 주문 상품: {fmtAmount(data.payment.full_item_total)}원
-                    </p>
-                  )}
+                  {/* "전체 주문 상품" sub-line removed per ops feedback —
+                      slice view now stands alone without the cross-tab
+                      number that confused partners on mixed-category
+                      orders (청첩장 + 데코소품). */}
                 </div>
                 <div>
                   <p className="text-xs font-medium text-slate-500">최종 결제금액</p>
@@ -253,11 +252,7 @@ export default function OrderDetailModal({
                       <span className="ml-0.5 text-sm font-normal text-slate-400">원</span>
                     </p>
                   )}
-                  {category && data.payment.full_last_total_price !== data.payment.last_total_price && (
-                    <p className="text-[11px] text-slate-400">
-                      전체 주문 결제: {fmtAmount(data.payment.full_last_total_price)}원
-                    </p>
-                  )}
+                  {/* "전체 주문 결제" sub-line removed (same reason as above). */}
                 </div>
               </section>
 
