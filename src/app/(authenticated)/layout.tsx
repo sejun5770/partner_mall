@@ -16,7 +16,7 @@ export default async function AuthenticatedLayout({
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50">
-      <Header userName={user.partnerName} />
+      <Header userName={user.partnerName} isAdmin={user.isAdmin} />
       {/* Child pages wrap their content in <main>; we only need a flex
           grow container here so the footer sticks to the bottom on short
           pages. */}

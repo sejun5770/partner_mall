@@ -6,14 +6,22 @@ import { useEffect, useRef, useState } from "react";
 
 interface HeaderProps {
   userName: string;
+  isAdmin?: boolean;
 }
 
-const NAV_ITEMS = [
+interface NavItem {
+  label: string;
+  href: string;
+  adminOnly?: boolean;
+}
+
+const NAV_ITEMS: NavItem[] = [
   { label: "정산관리", href: "/settlement" },
+  { label: "월별 정산", href: "/settlement/monthly", adminOnly: true },
   { label: "업체정보", href: "/partner" },
 ];
 
-export default function Header({ userName }: HeaderProps) {
+export default function Header({ userName, isAdmin }: HeaderProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [showLogout, setShowLogout] = useState(false);
@@ -55,8 +63,14 @@ export default function Header({ userName }: HeaderProps) {
 
         {/* Nav */}
         <nav className="flex flex-1 items-center gap-1">
-          {NAV_ITEMS.map((item) => {
-            const active = pathname.startsWith(item.href);
+          {NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin).map((item) => {
+            // /settlement/monthly should NOT also light up the parent
+            // /settlement entry — use exact-or-prefix matching instead of
+            // raw startsWith().
+            const active =
+              pathname === item.href ||
+              (item.href !== "/settlement" && pathname.startsWith(item.href + "/")) ||
+              (item.href === "/settlement" && pathname === "/settlement");
             return (
               <Link
                 key={item.href}
