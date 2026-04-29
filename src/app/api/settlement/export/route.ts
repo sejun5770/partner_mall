@@ -442,20 +442,20 @@ export async function GET(request: NextRequest) {
     }
 
     // ─── Column layout ──────────────────────────────────────────────
-    // Operations team's accounting template. 상태 column dropped — every
-    // settlement row is 발송완료 by construction (src_send_date IS NOT
-    // NULL filter), so the column would be a constant. 정산금액 added
-    // immediately right of 수수료 — same SQL expression as the on-screen
-    // list so row totals reconcile with the headline. 환불금액 inserted
-    // between 결제금액 and 공급가액 to surface post-shipment refunds that
-    // the legacy report hides.
+    // Operations team's accounting template, with redundant/placeholder
+    // columns removed per ops feedback (round-2):
+    //   - 결제금액 was a duplicate of PG결제금액 (always equal).
+    //   - 최종금액 = 결제금액 − 식권 was operationally noisy and not used
+    //     downstream.
+    //   - 기타 / 비고 placeholders carried no data the partner mall surfaces.
+    // Net result: 33 → 29 columns.
     const headers = [
       "주문번호", "부서", "제휴사ID", "제휴사", "담당자", "플래너명",
       "추가방법", "주문일", "결제일", "배송일", "취소일",
-      "결제방법", "결제정보", "PG결제금액", "결제금액", "환불금액",
-      "공급가액", "최종금액", "수수료", "정산금액", "주문자명",
-      "신랑/신부명", "상품명", "브랜드", "소비자단가", "수량", "기타",
-      "예식일자", "예식장", "예식구분", "비고", "구분", "핸드폰",
+      "결제방법", "결제정보", "PG결제금액", "환불금액",
+      "공급가액", "수수료", "정산금액", "주문자명",
+      "신랑/신부명", "상품명", "브랜드", "소비자단가", "수량",
+      "예식일자", "예식장", "예식구분", "구분", "핸드폰",
     ];
 
     // Category label specifically for the 구분 column. Matches what the
@@ -495,8 +495,7 @@ export async function GET(request: NextRequest) {
         r.pg_resultinfo2
       );
       // payment_amount is now NET of post-shipment refund (oc.ltp).
-      // grossTotal = original PG amount before refund, refund subtracted
-      // out for downstream columns.
+      // grossTotal = original PG amount before refund.
       const netTotal = Number(r.payment_amount ?? 0);
       const refund = Number(r.refund_after_send ?? 0);
       const grossTotal = netTotal + refund;
@@ -504,8 +503,6 @@ export async function GET(request: NextRequest) {
       const commission = Number(r.commission_amount ?? 0);
       const itemUnit = Number(r.item_amount ?? 0);
       const itemCnt = Number(r.item_count ?? 0);
-      const sikgwon = Number(r.sikgwon_amount ?? 0);
-      const finalAmount = netTotal - sikgwon;
       const { prefix: orderPrefix, method: addMethod } = classifyAddition(
         r.up_order_seq,
         r.order_add_flag
@@ -525,11 +522,9 @@ export async function GET(request: NextRequest) {
         r.cancel_date_str ?? "",                      // 취소일
         결제방법,                                     // 결제방법
         결제정보,                                     // 결제정보
-        String(grossTotal),                           // PG결제금액 (환불 전, 실제 PG 결제액)
-        String(grossTotal),                           // 결제금액 (환불 전)
+        String(grossTotal),                           // PG결제금액
         String(refund),                               // 환불금액 (출고후 환불)
         String(Number(r.supply_amount ?? 0)),         // 공급가액 = (결제 - 환불) / 1.1
-        String(finalAmount),                          // 최종금액 = (결제 - 환불) - 식권금액
         `${ratePct}%`,                                // 수수료
         String(commission),                           // 정산금액 = (결제 - 환불) × 수수료율
         r.order_name ?? "",                           // 주문자명
@@ -538,7 +533,6 @@ export async function GET(request: NextRequest) {
         brandName(r.card_brand),                      // 브랜드
         String(itemUnit),                             // 소비자단가
         String(itemCnt),                              // 수량
-        "-",                                          // 기타 (스펙 placeholder)
         r.wedd_date_str ?? "",                        // 예식일자
         // 예식장 = wedd_name + " " + wedd_place (e.g., "호텔인터불고 원주 1층 루비홀")
         [r.wedd_name, r.wedd_place]
@@ -546,7 +540,6 @@ export async function GET(request: NextRequest) {
           .filter(Boolean)
           .join(" "),                                 // 예식장
         (r.ceremony_kind ?? "").trim(),               // 예식구분 (0/1/2)
-        "",                                           // 비고
         KUBUN_LABEL[r.category] ?? "",                // 구분
         r.order_hphone ?? "",                         // 핸드폰
       ];
