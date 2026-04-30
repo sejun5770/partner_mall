@@ -150,8 +150,14 @@ export default function ConsentTable() {
                 </tr>
               ) : !data || data.rows.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-10 text-center text-slate-500">
-                    조회된 데이터가 없습니다.
+                  <td colSpan={5} className="py-12 text-center">
+                    <p className="text-sm text-slate-500">
+                      조회된 데이터가 없습니다.
+                    </p>
+                    <p className="mt-2 text-xs text-slate-400">
+                      DB 송부가 일시 중단된 기간이거나, 데이터 출처 확정이 필요한
+                      상태일 수 있습니다. 운영팀에 문의 부탁드립니다.
+                    </p>
                   </td>
                 </tr>
               ) : (
