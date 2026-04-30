@@ -9,7 +9,8 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN mkdir -p public
 RUN npx prisma generate 2>/dev/null || true
-ENV NEXT_PUBLIC_BASE_PATH=/c/partner
+ARG NEXT_PUBLIC_BASE_PATH=
+ENV NEXT_PUBLIC_BASE_PATH=${NEXT_PUBLIC_BASE_PATH}
 RUN npm run build
 RUN mkdir -p /prisma-runtime && if [ -f prisma/schema.prisma ]; then cp -r prisma /prisma-runtime/ && cp package.json /prisma-runtime/ && cd /prisma-runtime && npm install prisma --no-save 2>/dev/null; fi
 
