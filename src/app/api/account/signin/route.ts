@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMssqlPool } from "@/lib/db";
-import { signToken, TOKEN_NAME, isAdminLoginId } from "@/lib/auth";
+import { signToken, TOKEN_NAME, isAdminLoginId, defaultLandingFor } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
   const { id, password } = await request.json();
@@ -43,16 +43,22 @@ export async function POST(request: NextRequest) {
     }
 
     const isAdmin = await isAdminLoginId(user.LOGIN_ID);
-    const token = signToken({
+    const partnerUser = {
       id: user.COMPANY_SEQ,
       userId: user.LOGIN_ID,
       email: user.E_MAIL ?? "",
       partnerShopId: user.COMPANY_SEQ,
       partnerName: user.COMPANY_NAME ?? "",
       isAdmin,
-    });
+    };
+    const token = signToken(partnerUser);
 
-    const response = NextResponse.json({ success: true });
+    // Tells the LoginForm where to send the user — defaults to /settlement
+    // but special-role accounts (e.g. casamia_mkt) get their dedicated
+    // landing page instead.
+    const landing = defaultLandingFor(partnerUser);
+
+    const response = NextResponse.json({ success: true, landing });
     response.cookies.set(TOKEN_NAME, token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",

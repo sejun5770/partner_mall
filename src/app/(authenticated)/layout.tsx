@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getCurrentUser } from "@/lib/auth";
+import { getCurrentUser, specialRoleOf } from "@/lib/auth";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 
@@ -16,7 +16,11 @@ export default async function AuthenticatedLayout({
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50">
-      <Header userName={user.partnerName} isAdmin={user.isAdmin} />
+      <Header
+        userName={user.partnerName}
+        isAdmin={user.isAdmin}
+        specialRole={specialRoleOf(user)}
+      />
       {/* Child pages wrap their content in <main>; we only need a flex
           grow container here so the footer sticks to the bottom on short
           pages. */}

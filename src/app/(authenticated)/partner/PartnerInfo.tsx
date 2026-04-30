@@ -140,8 +140,8 @@ export default function PartnerInfo() {
         </Grid>
       </Section>
 
-      <p className="text-xs text-slate-400">
-        ※ 업체 정보 변경은 바른손 관리자 포털에서 처리됩니다.
+      <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        ※ 정보변경은 관리자에게 문의해 주세요.
       </p>
     </div>
   );

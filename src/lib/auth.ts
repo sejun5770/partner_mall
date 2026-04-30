@@ -40,6 +40,25 @@ export interface PartnerUser {
 }
 
 /**
+ * Special-role detection. Some partner accounts get a different landing
+ * page (e.g. 'casamia_mkt' is for 까사미아 marketing consent stats only,
+ * doesn't see the regular 정산관리 / 업체정보 menus). Adding more roles
+ * here later just adds a branch.
+ */
+export type SpecialRole = "casamia_mkt";
+
+export function specialRoleOf(user: PartnerUser): SpecialRole | null {
+  if (user.userId === "casamia_mkt") return "casamia_mkt";
+  return null;
+}
+
+/** Destination after login (and from the root '/' redirect). */
+export function defaultLandingFor(user: PartnerUser): string {
+  if (specialRoleOf(user) === "casamia_mkt") return "/marketing/consent";
+  return "/settlement";
+}
+
+/**
  * DB-backed admin check, called at sign-in time. Two signals are checked:
  *
  *   1. The user has an active row in `ADMIN_LST` whose ADMIN_ID matches

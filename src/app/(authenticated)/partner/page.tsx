@@ -1,10 +1,11 @@
-import { getCurrentUser } from "@/lib/auth";
+import { getCurrentUser, specialRoleOf, defaultLandingFor } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import PartnerInfo from "./PartnerInfo";
 
 export default async function PartnerPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/account/signin");
+  if (specialRoleOf(user)) redirect(defaultLandingFor(user));
 
   return (
     <main className="mx-auto max-w-7xl px-6 py-8">

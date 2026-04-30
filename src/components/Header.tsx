@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 interface HeaderProps {
   userName: string;
   isAdmin?: boolean;
+  specialRole?: "casamia_mkt" | null;
 }
 
 interface NavItem {
@@ -15,13 +16,19 @@ interface NavItem {
   adminOnly?: boolean;
 }
 
-const NAV_ITEMS: NavItem[] = [
+const STANDARD_NAV: NavItem[] = [
   { label: "정산관리", href: "/settlement" },
   { label: "월별 정산", href: "/settlement/monthly", adminOnly: true },
   { label: "업체정보", href: "/partner" },
 ];
 
-export default function Header({ userName, isAdmin }: HeaderProps) {
+// 까사미아 마케팅 계정은 정산/업체정보 영역을 사용하지 않고 마케팅
+// 동의 통계만 볼 수 있음.
+const CASAMIA_MKT_NAV: NavItem[] = [
+  { label: "마케팅 동의 통계", href: "/marketing/consent" },
+];
+
+export default function Header({ userName, isAdmin, specialRole }: HeaderProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [showLogout, setShowLogout] = useState(false);
@@ -63,7 +70,9 @@ export default function Header({ userName, isAdmin }: HeaderProps) {
 
         {/* Nav */}
         <nav className="flex flex-1 items-center gap-1">
-          {NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin).map((item) => {
+          {(specialRole === "casamia_mkt" ? CASAMIA_MKT_NAV : STANDARD_NAV)
+            .filter((item) => !item.adminOnly || isAdmin)
+            .map((item) => {
             // /settlement/monthly should NOT also light up the parent
             // /settlement entry — use exact-or-prefix matching instead of
             // raw startsWith().

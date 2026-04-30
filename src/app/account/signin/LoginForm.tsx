@@ -34,8 +34,14 @@ export default function LoginForm() {
       });
 
       if (res.ok) {
-        const returnUrl = searchParams?.get("ReturnUrl") || "/settlement";
-        router.push(returnUrl.startsWith("/") ? returnUrl : "/settlement");
+        // Server picks the right landing page (special-role accounts go
+        // to a different first screen than /settlement). ReturnUrl from
+        // a deep link still wins so a manual refresh on a protected page
+        // brings the user back where they were.
+        const body = (await res.json().catch(() => ({}))) as { landing?: string };
+        const fallback = body.landing || "/settlement";
+        const returnUrl = searchParams?.get("ReturnUrl") || fallback;
+        router.push(returnUrl.startsWith("/") ? returnUrl : fallback);
       } else {
         const data = await res.json().catch(() => ({}));
         setError(data.message || "로그인에 실패했습니다.");
