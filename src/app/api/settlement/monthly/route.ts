@@ -105,13 +105,11 @@ export async function GET(request: NextRequest) {
           AND o.trouble_type = '0'
           AND (
             ${shippedInPeriodExpr}
-            OR EXISTS (
-              SELECT 1 FROM custom_order_refund r
-              WHERE r.order_seq = o.order_seq
-                AND TRY_CAST(r.refund_date AS DATE) >= CAST(o.src_send_date AS DATE)
-                AND TRY_CAST(r.refund_date AS DATE) >= @startDate
-                AND TRY_CAST(r.refund_date AS DATE) <  @endDateExcl
-            )
+            -- refund-in-period detection: rf is the LEFT JOIN that already
+            -- bounds refund_date to the period. Non-NULL means a refund
+            -- exists for this order in this period. Avoids SQL Server
+            -- optimizer "internal error" we hit with EXISTS + GROUP BY.
+            OR rf.refund_after_send > 0
           )
         GROUP BY o.order_seq, o.company_seq
       )

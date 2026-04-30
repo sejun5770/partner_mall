@@ -176,19 +176,14 @@ export async function GET(request: NextRequest) {
         AND ${shippedInPeriodExpr}
     `;
 
-    // Inclusion test for an order with refund_date in the current period.
-    // Mirrors the refundJoin but lives outside it as an EXISTS condition
-    // so we can include orders shipped in earlier months whose refund
-    // 환불예정일 falls in the current period (the May-blanc case).
-    const refundInPeriodExists = `
-      EXISTS (
-        SELECT 1 FROM custom_order_refund r
-        WHERE r.order_seq = o.order_seq
-          AND TRY_CAST(r.refund_date AS DATE) >= CAST(o.src_send_date AS DATE)
-          AND TRY_CAST(r.refund_date AS DATE) >= @startDate
-          AND TRY_CAST(r.refund_date AS DATE) <  @endDateExcl
-      )
-    `;
+    // Refund-in-period test. Earlier this used a correlated EXISTS
+    // subquery, but combined with the GROUP BY on order_seq the SQL
+    // Server optimizer raised "internal error" on production load
+    // (Azure SQL). The refundJoin already brings rf.refund_after_send
+    // into scope as a LEFT JOIN bounded by the same period filter —
+    // a non-NULL value means the order has a refund in the period,
+    // so we just check that. Avoids the optimizer issue and reads simpler.
+    const refundInPeriodExists = `(rf.refund_after_send > 0)`;
 
     // Per-order item-category sums. Uses categoryCaseSql so any change to
     // the goods / thankyou / invitation rule (lib/category.ts) is honored

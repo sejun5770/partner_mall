@@ -117,15 +117,9 @@ export async function GET(request: NextRequest) {
       ${baseSharedFilters}
         AND ${shippedInPeriodExpr}
     `;
-    const refundInPeriodExists = `
-      EXISTS (
-        SELECT 1 FROM custom_order_refund r
-        WHERE r.order_seq = o.order_seq
-          AND TRY_CAST(r.refund_date AS DATE) >= CAST(o.src_send_date AS DATE)
-          AND TRY_CAST(r.refund_date AS DATE) >= @startDate
-          AND TRY_CAST(r.refund_date AS DATE) <  @endDateExcl
-      )
-    `;
+    // See /api/settlement/route.ts — EXISTS broke the SQL Server
+    // optimizer under GROUP BY, switched to the LEFT JOIN flag.
+    const refundInPeriodExists = `(rf.refund_after_send > 0)`;
 
     type ExportRow = {
       order_seq: number;
