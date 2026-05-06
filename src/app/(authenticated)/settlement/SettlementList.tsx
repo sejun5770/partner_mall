@@ -89,6 +89,37 @@ const CATEGORY_BADGE_CLASS: Record<Category, string> = {
   goods: "bg-amber-50 text-amber-700 ring-1 ring-amber-200",
 };
 
+// Filter values that should ONLY take effect on 검색 button click.
+// Tab switching, pagination, and page-size changes still re-fetch
+// immediately using whatever filters were last applied.
+interface AppliedFilters {
+  filterMode: FilterMode;
+  dateBasis: "order" | "send";
+  month: string;
+  dateFrom: string;
+  dateTo: string;
+  selectedPartnerId: string;
+  partnerNameSearch: string;
+  plannerNameSearch: string;
+  productKind: "" | "regular" | "premium";
+  refundFilter: "" | "only";
+}
+
+function makeDefaultFilters(): AppliedFilters {
+  return {
+    filterMode: "month",
+    dateBasis: "order",
+    month: fmtMonth(new Date()),
+    dateFrom: "",
+    dateTo: "",
+    selectedPartnerId: "",
+    partnerNameSearch: "",
+    plannerNameSearch: "",
+    productKind: "",
+    refundFilter: "",
+  };
+}
+
 export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
   const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [summary, setSummary] = useState<SettlementSummary | null>(null);
@@ -97,26 +128,29 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
   const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(true);
 
+  // ─── Draft (form input) state ─────────────────────────────────
+  // Editing these does NOT trigger a fetch — only 검색 button.
   const [filterMode, setFilterMode] = useState<FilterMode>("month");
-  // Period basis: "order" = 주문일, "send" = 배송일. Defaults to 주문일 to
-  // match the production portal's PG aggregate.
   const [dateBasis, setDateBasis] = useState<"order" | "send">("order");
   const [month, setMonth] = useState(() => fmtMonth(new Date()));
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-
-  // Non-admin partners only see 청첩장; admins start on "전체".
-  const [categoryTab, setCategoryTab] = useState<CategoryTab>(isAdmin ? "all" : "invitation");
-
-  const [partners, setPartners] = useState<PartnerOption[]>([]);
   const [selectedPartnerId, setSelectedPartnerId] = useState<string>("");
   const [partnerNameSearch, setPartnerNameSearch] = useState<string>("");
   const [plannerNameSearch, setPlannerNameSearch] = useState<string>("");
-  // 제품구분: '' = 전체, 'regular' = 일반청첩장, 'premium' = 고급청첩장
-  // (premium = first item CardBrand='P' / 프리미어페이퍼)
   const [productKind, setProductKind] = useState<"" | "regular" | "premium">("");
-  // 환불 여부: '' = 전체, 'only' = 환불 발생 주문만
   const [refundFilter, setRefundFilter] = useState<"" | "only">("");
+
+  // ─── Applied state (what's actually being fetched) ────────────
+  // Snapshot of the draft fields at the moment 검색 was clicked
+  // (or initial defaults on first render).
+  const [appliedFilters, setAppliedFilters] = useState<AppliedFilters>(makeDefaultFilters);
+
+  // Non-admin partners only see 청첩장; admins start on "전체".
+  // categoryTab is "live" — clicking a tab re-fetches immediately.
+  const [categoryTab, setCategoryTab] = useState<CategoryTab>(isAdmin ? "all" : "invitation");
+
+  const [partners, setPartners] = useState<PartnerOption[]>([]);
 
   // Order-detail modal state
   const [openOrderSeq, setOpenOrderSeq] = useState<number | null>(null);
@@ -129,117 +163,130 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
       .catch((err) => console.error("partner list error", err));
   }, [isAdmin]);
 
-  const fetchSettlements = useCallback(async () => {
-    setLoading(true);
-    const params = new URLSearchParams({
-      page: String(page),
-      pageSize: String(pageSize),
-    });
-    if (filterMode === "month" && month) {
-      params.set("month", month);
-    } else if (filterMode === "range") {
-      if (dateFrom) params.set("dateFrom", dateFrom);
-      if (dateTo) params.set("dateTo", dateTo);
-    }
-    if (isAdmin && selectedPartnerId) params.set("partnerShopId", selectedPartnerId);
-    if (isAdmin && partnerNameSearch) params.set("partnerName", partnerNameSearch);
-    if (plannerNameSearch.trim()) params.set("plannerName", plannerNameSearch.trim());
-    if (productKind) params.set("productKind", productKind);
-    if (refundFilter) params.set("refundFilter", refundFilter);
-    if (categoryTab !== "all") params.set("category", categoryTab);
-    params.set("dateBasis", dateBasis);
+  // Build URLSearchParams from a filter snapshot. Shared between the list
+  // fetch and the Excel export so both always send the same scope.
+  const buildParams = useCallback(
+    (
+      f: AppliedFilters,
+      opts: { page?: number; pageSize?: number; category: CategoryTab },
+    ) => {
+      const params = new URLSearchParams();
+      if (opts.page !== undefined) params.set("page", String(opts.page));
+      if (opts.pageSize !== undefined) params.set("pageSize", String(opts.pageSize));
+      if (f.filterMode === "month" && f.month) {
+        params.set("month", f.month);
+      } else if (f.filterMode === "range") {
+        if (f.dateFrom) params.set("dateFrom", f.dateFrom);
+        if (f.dateTo) params.set("dateTo", f.dateTo);
+      }
+      if (isAdmin && f.selectedPartnerId)
+        params.set("partnerShopId", f.selectedPartnerId);
+      if (isAdmin && f.partnerNameSearch)
+        params.set("partnerName", f.partnerNameSearch);
+      if (f.plannerNameSearch.trim())
+        params.set("plannerName", f.plannerNameSearch.trim());
+      if (f.productKind) params.set("productKind", f.productKind);
+      if (f.refundFilter) params.set("refundFilter", f.refundFilter);
+      if (opts.category !== "all") params.set("category", opts.category);
+      params.set("dateBasis", f.dateBasis);
+      return params;
+    },
+    [isAdmin],
+  );
 
-    try {
-      const res = await fetch(`/api/settlement?${params}`);
-      const data: Partial<SettlementResponse> = await res.json().catch(() => ({}));
-      setSettlements(data.settlements ?? []);
-      setSummary(data.summary ?? null);
-      setTotal(data.total ?? 0);
-    } catch (err) {
-      console.error(err);
-      setSettlements([]);
-      setSummary(null);
-      setTotal(0);
-    }
-    setLoading(false);
-  }, [
-    page,
-    pageSize,
-    filterMode,
-    month,
-    dateFrom,
-    dateTo,
-    isAdmin,
-    selectedPartnerId,
-    partnerNameSearch,
-    plannerNameSearch,
-    productKind,
-    refundFilter,
-    categoryTab,
-    dateBasis,
-  ]);
-
+  // Fetch driven by APPLIED filters + page/tab/pageSize. Editing draft
+  // form fields does NOT re-fetch — only 검색 (which copies draft → applied).
+  // Tab switching, pagination, and pageSize still trigger immediate fetch
+  // using whatever filters were last applied.
   useEffect(() => {
-    fetchSettlements();
-  }, [fetchSettlements]);
+    let cancelled = false;
+    setLoading(true);
+    const params = buildParams(appliedFilters, { page, pageSize, category: categoryTab });
+    fetch(`/api/settlement?${params}`)
+      .then(async (res) => {
+        const data: Partial<SettlementResponse> = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        setSettlements(data.settlements ?? []);
+        setSummary(data.summary ?? null);
+        setTotal(data.total ?? 0);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error(err);
+        setSettlements([]);
+        setSummary(null);
+        setTotal(0);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [appliedFilters, page, pageSize, categoryTab, buildParams]);
 
-  // Excel (CSV) download of the current filter set. Uses the same query
-  // params as the list fetch so what the user sees on screen is what they
-  // get in the file.
+  // Excel — uses the currently APPLIED filters (the data the user is
+  // looking at), not pending draft edits.
   const handleExport = () => {
-    const params = new URLSearchParams();
-    if (filterMode === "month" && month) params.set("month", month);
-    else if (filterMode === "range") {
-      if (dateFrom) params.set("dateFrom", dateFrom);
-      if (dateTo) params.set("dateTo", dateTo);
-    }
-    if (isAdmin && selectedPartnerId) params.set("partnerShopId", selectedPartnerId);
-    if (isAdmin && partnerNameSearch) params.set("partnerName", partnerNameSearch);
-    if (plannerNameSearch.trim()) params.set("plannerName", plannerNameSearch.trim());
-    if (productKind) params.set("productKind", productKind);
-    if (refundFilter) params.set("refundFilter", refundFilter);
-    if (categoryTab !== "all") params.set("category", categoryTab);
-    params.set("dateBasis", dateBasis);
+    const params = buildParams(appliedFilters, { category: categoryTab });
     window.location.href = `/api/settlement/export?${params}`;
   };
 
+  // 검색 button: copy draft → applied. The fetch effect above runs in
+  // response. Resets to page 1 so a wider date doesn't strand the user
+  // on a now-empty page number.
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
+    setAppliedFilters({
+      filterMode,
+      dateBasis,
+      month,
+      dateFrom,
+      dateTo,
+      selectedPartnerId,
+      partnerNameSearch,
+      plannerNameSearch,
+      productKind,
+      refundFilter,
+    });
     setPage(1);
-    fetchSettlements();
   };
 
   const handleReset = () => {
-    setFilterMode("month");
-    setMonth(fmtMonth(new Date()));
-    setDateFrom("");
-    setDateTo("");
-    setSelectedPartnerId("");
-    setPartnerNameSearch("");
-    setPlannerNameSearch("");
-    setProductKind("");
-    setRefundFilter("");
+    const defaults = makeDefaultFilters();
+    setFilterMode(defaults.filterMode);
+    setMonth(defaults.month);
+    setDateFrom(defaults.dateFrom);
+    setDateTo(defaults.dateTo);
+    setSelectedPartnerId(defaults.selectedPartnerId);
+    setPartnerNameSearch(defaults.partnerNameSearch);
+    setPlannerNameSearch(defaults.plannerNameSearch);
+    setProductKind(defaults.productKind);
+    setRefundFilter(defaults.refundFilter);
+    setDateBasis(defaults.dateBasis);
     setCategoryTab(isAdmin ? "all" : "invitation");
-    setDateBasis("order");
+    setAppliedFilters(defaults);
     setPage(1);
   };
 
+  // 전월 / 당월 buttons just update the draft form fields; the user still
+  // clicks 검색 to apply. Keeps the "검색 button only" rule consistent.
   const setPrevMonth = () => {
     setFilterMode("month");
     const d = new Date();
     d.setDate(1);
     d.setMonth(d.getMonth() - 1);
     setMonth(fmtMonth(d));
-    setPage(1);
   };
   const setCurrMonth = () => {
     setFilterMode("month");
     setMonth(fmtMonth(new Date()));
-    setPage(1);
   };
 
   const totalPages = Math.ceil(total / pageSize);
-  const showPartnerCols = isAdmin && !selectedPartnerId;
+  // Column visibility follows APPLIED state so layout doesn't shift while
+  // the user is mid-edit (e.g. picking a partner from the dropdown).
+  const showPartnerCols = isAdmin && !appliedFilters.selectedPartnerId;
   // Category column ("분류") is admin-only; non-admin partners are locked
   // to the 청첩장 category and the column would always say "청첩장".
   const showCategoryCol = isAdmin;
@@ -272,10 +319,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
               <label className="w-24 text-sm font-medium text-slate-700">제휴사</label>
               <select
                 value={selectedPartnerId}
-                onChange={(e) => {
-                  setSelectedPartnerId(e.target.value);
-                  setPage(1);
-                }}
+                onChange={(e) => setSelectedPartnerId(e.target.value)}
                 className="h-9 min-w-64 rounded border border-slate-300 bg-white px-2 text-sm"
               >
                 <option value="">전체</option>
@@ -313,10 +357,9 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
             <label className="w-24 text-sm font-medium text-slate-700">제품구분</label>
             <select
               value={productKind}
-              onChange={(e) => {
-                setProductKind(e.target.value as "" | "regular" | "premium");
-                setPage(1);
-              }}
+              onChange={(e) =>
+                setProductKind(e.target.value as "" | "regular" | "premium")
+              }
               className="h-9 w-40 rounded border border-slate-300 bg-white px-2 text-sm"
             >
               <option value="">전체</option>
@@ -327,10 +370,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
             <span className="ml-2 text-sm font-medium text-slate-700">환불 여부</span>
             <select
               value={refundFilter}
-              onChange={(e) => {
-                setRefundFilter(e.target.value as "" | "only");
-                setPage(1);
-              }}
+              onChange={(e) => setRefundFilter(e.target.value as "" | "only")}
               className="h-9 w-40 rounded border border-slate-300 bg-white px-2 text-sm"
             >
               <option value="">전체</option>
@@ -346,10 +386,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                   type="radio"
                   name="dateBasis"
                   checked={dateBasis === "order"}
-                  onChange={() => {
-                    setDateBasis("order");
-                    setPage(1);
-                  }}
+                  onChange={() => setDateBasis("order")}
                 />
                 주문일
               </label>
@@ -358,10 +395,7 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                   type="radio"
                   name="dateBasis"
                   checked={dateBasis === "send"}
-                  onChange={() => {
-                    setDateBasis("send");
-                    setPage(1);
-                  }}
+                  onChange={() => setDateBasis("send")}
                 />
                 배송일
               </label>

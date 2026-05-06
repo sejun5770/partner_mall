@@ -15,6 +15,12 @@ const mssqlConfig: sql.config = {
   user: process.env.MSSQL_USER || "",
   password: process.env.MSSQL_PASSWORD || "",
   database: process.env.MSSQL_DATABASE || "bar_shop1",
+  // mssql defaults requestTimeout to 15s — too tight for the settlement
+  // queries when the user widens the date range to multi-month or year+.
+  // 60s gives the optimizer enough headroom on the larger result sets
+  // (the page itself still uses OFFSET/FETCH, so wire payload stays bounded).
+  // connectionTimeout left at default (15s) since DB connect should be fast.
+  requestTimeout: 60000,
   options: {
     encrypt: true,
     trustServerCertificate: true,
