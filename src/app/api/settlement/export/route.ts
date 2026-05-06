@@ -237,9 +237,10 @@ export async function GET(request: NextRequest) {
     // refund_date must fall within the current period filter so that
     // refunds with future 환불예정일 (e.g., 5월 expected refund on a
     // 4월-shipped order) are deferred to that month's settlement.
+    // BIGINT cast on refund_price avoids INT overflow on wide ranges.
     const refundJoin = `
       LEFT JOIN (
-        SELECT r.order_seq, SUM(r.refund_price) AS refund_after_send
+        SELECT r.order_seq, SUM(CAST(r.refund_price AS BIGINT)) AS refund_after_send
         FROM custom_order_refund r
         JOIN custom_order o2 ON o2.order_seq = r.order_seq
         WHERE TRY_CAST(r.refund_date AS DATE) >= CAST(o2.src_send_date AS DATE)
@@ -249,22 +250,24 @@ export async function GET(request: NextRequest) {
       ) rf ON rf.order_seq = o.order_seq
     `;
 
+    // BIGINT casts to avoid SUM(INT) overflow on wide date ranges —
+    // see /api/settlement/route.ts for the full rationale.
     const orderCatsCte = `
       order_cats AS (
         SELECT
           o.order_seq,
           MAX(CASE WHEN ${shippedInPeriodExpr} THEN 0 ELSE 1 END) AS is_refund_only,
-          MAX(o.last_total_price) AS gross_ltp,
+          MAX(CAST(o.last_total_price AS BIGINT)) AS gross_ltp,
           MAX(ISNULL(rf.refund_after_send, 0)) AS refund_after_send,
           CASE
             WHEN MAX(CASE WHEN ${shippedInPeriodExpr} THEN 1 ELSE 0 END) = 1
-              THEN MAX(o.last_total_price) - MAX(ISNULL(rf.refund_after_send, 0))
+              THEN MAX(CAST(o.last_total_price AS BIGINT)) - MAX(ISNULL(rf.refund_after_send, 0))
             ELSE
               -MAX(ISNULL(rf.refund_after_send, 0))
           END AS ltp,
-          SUM(CASE WHEN ${itemCategoryExpr} = 'invitation' THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS inv_items,
-          SUM(CASE WHEN ${itemCategoryExpr} = 'thankyou'   THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS tya_items,
-          SUM(CASE WHEN ${itemCategoryExpr} = 'goods'      THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS gds_items,
+          SUM(CASE WHEN ${itemCategoryExpr} = 'invitation' THEN CAST(oi.item_sale_price AS BIGINT) * oi.item_count ELSE 0 END) AS inv_items,
+          SUM(CASE WHEN ${itemCategoryExpr} = 'thankyou'   THEN CAST(oi.item_sale_price AS BIGINT) * oi.item_count ELSE 0 END) AS tya_items,
+          SUM(CASE WHEN ${itemCategoryExpr} = 'goods'      THEN CAST(oi.item_sale_price AS BIGINT) * oi.item_count ELSE 0 END) AS gds_items,
           MAX(CASE WHEN ${itemCategoryExpr} = 'invitation' THEN 1 ELSE 0 END) AS has_inv,
           MAX(CASE WHEN ${itemCategoryExpr} = 'thankyou'   THEN 1 ELSE 0 END) AS has_tya,
           MAX(CASE WHEN ${itemCategoryExpr} = 'goods'      THEN 1 ELSE 0 END) AS has_gds,

@@ -203,7 +203,7 @@ export async function GET(request: NextRequest) {
     // surfacing is operational and handled via the legacy 환불관리 page.
     const refundJoin = `
       LEFT JOIN (
-        SELECT r.order_seq, SUM(r.refund_price) AS refund_after_send
+        SELECT r.order_seq, SUM(CAST(r.refund_price AS BIGINT)) AS refund_after_send
         FROM custom_order_refund r
         JOIN custom_order o2 ON o2.order_seq = r.order_seq
         WHERE TRY_CAST(r.refund_date AS DATE) >= CAST(o2.src_send_date AS DATE)
@@ -232,23 +232,29 @@ export async function GET(request: NextRequest) {
     //   shipped-in-period   → gross_ltp - refund_after_send
     //   refund-only         → -refund_after_send  (offset against earlier
     //                          period's already-paid commission)
+    //
+    // CAST(... AS BIGINT) on last_total_price / refund_price — the source
+    // columns are INT, and a wide date range can push SUM(ltp) past 21억
+    // (INT max), tripping mssql with "Arithmetic overflow" + a generic
+    // 'UNKNOWN' RequestError on the client. BIGINT keeps headroom up to
+    // 9.2 quintillion.
     const orderCatsCte = `
       order_cats AS (
         SELECT
           o.order_seq,
           o.company_seq,
           MAX(CASE WHEN ${shippedInPeriodExpr} THEN 0 ELSE 1 END) AS is_refund_only,
-          MAX(o.last_total_price) AS gross_ltp,
+          MAX(CAST(o.last_total_price AS BIGINT)) AS gross_ltp,
           MAX(ISNULL(rf.refund_after_send, 0)) AS refund_after_send,
           CASE
             WHEN MAX(CASE WHEN ${shippedInPeriodExpr} THEN 1 ELSE 0 END) = 1
-              THEN MAX(o.last_total_price) - MAX(ISNULL(rf.refund_after_send, 0))
+              THEN MAX(CAST(o.last_total_price AS BIGINT)) - MAX(ISNULL(rf.refund_after_send, 0))
             ELSE
               -MAX(ISNULL(rf.refund_after_send, 0))
           END AS ltp,
-          SUM(CASE WHEN ${itemCategoryExpr} = 'invitation' THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS inv_items,
-          SUM(CASE WHEN ${itemCategoryExpr} = 'thankyou'   THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS tya_items,
-          SUM(CASE WHEN ${itemCategoryExpr} = 'goods'      THEN oi.item_sale_price * oi.item_count ELSE 0 END) AS gds_items,
+          SUM(CASE WHEN ${itemCategoryExpr} = 'invitation' THEN CAST(oi.item_sale_price AS BIGINT) * oi.item_count ELSE 0 END) AS inv_items,
+          SUM(CASE WHEN ${itemCategoryExpr} = 'thankyou'   THEN CAST(oi.item_sale_price AS BIGINT) * oi.item_count ELSE 0 END) AS tya_items,
+          SUM(CASE WHEN ${itemCategoryExpr} = 'goods'      THEN CAST(oi.item_sale_price AS BIGINT) * oi.item_count ELSE 0 END) AS gds_items,
           MAX(CASE WHEN ${itemCategoryExpr} = 'invitation' THEN 1 ELSE 0 END) AS has_inv,
           MAX(CASE WHEN ${itemCategoryExpr} = 'thankyou'   THEN 1 ELSE 0 END) AS has_tya,
           MAX(CASE WHEN ${itemCategoryExpr} = 'goods'      THEN 1 ELSE 0 END) AS has_gds,

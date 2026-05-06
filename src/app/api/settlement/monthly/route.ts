@@ -78,11 +78,11 @@ export async function GET(request: NextRequest) {
           o.order_seq,
           o.company_seq,
           MAX(CASE WHEN ${shippedInPeriodExpr} THEN 0 ELSE 1 END) AS is_refund_only,
-          MAX(o.last_total_price) AS gross_ltp,
+          MAX(CAST(o.last_total_price AS BIGINT)) AS gross_ltp,
           MAX(ISNULL(rf.refund_after_send, 0)) AS refund_after_send,
           CASE
             WHEN MAX(CASE WHEN ${shippedInPeriodExpr} THEN 1 ELSE 0 END) = 1
-              THEN MAX(o.last_total_price) - MAX(ISNULL(rf.refund_after_send, 0))
+              THEN MAX(CAST(o.last_total_price AS BIGINT)) - MAX(ISNULL(rf.refund_after_send, 0))
             ELSE
               -MAX(ISNULL(rf.refund_after_send, 0))
           END AS ltp,
@@ -92,7 +92,7 @@ export async function GET(request: NextRequest) {
         JOIN custom_order_item oi ON oi.order_seq = o.order_seq
         JOIN S2_Card sc ON sc.Card_Seq = oi.card_seq
         LEFT JOIN (
-          SELECT r.order_seq, SUM(r.refund_price) AS refund_after_send
+          SELECT r.order_seq, SUM(CAST(r.refund_price AS BIGINT)) AS refund_after_send
           FROM custom_order_refund r
           JOIN custom_order o2 ON o2.order_seq = r.order_seq
           WHERE TRY_CAST(r.refund_date AS DATE) >= CAST(o2.src_send_date AS DATE)
