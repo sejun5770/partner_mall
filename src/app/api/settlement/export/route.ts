@@ -92,7 +92,8 @@ export async function GET(request: NextRequest) {
     // refund subquery — can exceed the 15-second mssql default under heavy
     // filters. 120 seconds covers even wide date-range + name-search combos.
     const req = pool.request();
-    req.timeout = 120000;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (req as any).timeout = 120000;
     req
       .input("startDate", sql.Date, startDate)
       .input("endDateExcl", sql.Date, endDateExcl)
