@@ -19,14 +19,14 @@ const mssqlConfig: sql.config = {
   // queries when the user widens the date range to multi-month or year+.
   // 60s gives the optimizer enough headroom on the larger result sets
   // (the page itself still uses OFFSET/FETCH, so wire payload stays bounded).
-  // connectionTimeout left at default (15s) since DB connect should be fast.
+  // connectionTimeout bumped to 60s as well to absorb cold-pool reconnects
+  // through the docker-manager → Azure SQL hop.
   requestTimeout: 60000,
+  connectionTimeout: 60000,
   options: {
     encrypt: true,
     trustServerCertificate: true,
   },
-  connectionTimeout: 60000,
-  requestTimeout: 60000,
   pool: {
     max: 10,
     min: 0,
