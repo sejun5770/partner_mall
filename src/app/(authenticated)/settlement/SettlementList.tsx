@@ -159,18 +159,31 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
   // Open when user is typing AND there are partial matches; click on a
   // suggestion fills the input with the EXACT name (server filter uses
   // '=', so partial-typed strings would otherwise return 0 rows).
+  //
+  // Dedup by (partner_name, login_id) — the COMPANY table has historical
+  // duplicates (e.g. three rows all named '베리굿웨딩' with login_id
+  // 'verygood'). Since the server filter does '=' on COMPANY_NAME, all
+  // duplicates resolve to the same row set, so showing each separately
+  // is just visual noise.
   const [partnerSuggestionsOpen, setPartnerSuggestionsOpen] = useState(false);
   const partnerSuggestions = (() => {
     if (!isAdmin) return [];
     const q = partnerNameSearch.trim().toLowerCase();
     if (!q) return [];
-    return partners
-      .filter(
-        (p) =>
-          p.partner_name.toLowerCase().includes(q) ||
-          p.login_id.toLowerCase().includes(q),
-      )
-      .slice(0, 10);
+    const seen = new Set<string>();
+    const out: PartnerOption[] = [];
+    for (const p of partners) {
+      const matches =
+        p.partner_name.toLowerCase().includes(q) ||
+        p.login_id.toLowerCase().includes(q);
+      if (!matches) continue;
+      const key = `${p.partner_name}|${p.login_id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(p);
+      if (out.length >= 10) break;
+    }
+    return out;
   })();
 
   useEffect(() => {
