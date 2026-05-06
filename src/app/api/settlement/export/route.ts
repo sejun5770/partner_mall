@@ -88,8 +88,12 @@ export async function GET(request: NextRequest) {
   try {
     const pool = await getMssqlPool();
 
-    const req = pool
-      .request()
+    // Export scans all matching rows (no pagination) and includes a complex
+    // refund subquery — can exceed the 15-second mssql default under heavy
+    // filters. 120 seconds covers even wide date-range + name-search combos.
+    const req = pool.request();
+    req.timeout = 120000;
+    req
       .input("startDate", sql.Date, startDate)
       .input("endDateExcl", sql.Date, endDateExcl)
       .input("companySeq", sql.Int, filterCompanySeq)
