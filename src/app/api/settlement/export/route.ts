@@ -40,12 +40,12 @@ export async function GET(request: NextRequest) {
   const dateColumn = dateBasis === "send" ? "o.src_send_date" : "o.order_date";
 
   let filterCompanySeq: number | null;
-  let partnerNameLike: string | null = null;
+  let partnerNameExact: string | null = null;
   if (user.isAdmin) {
     const q = searchParams.get("partnerShopId");
     filterCompanySeq = q ? parseInt(q) : null;
     const pn = searchParams.get("partnerName");
-    partnerNameLike = pn ? `%${pn}%` : null;
+    partnerNameExact = pn ? pn.trim() : null;
   } else {
     filterCompanySeq = user.partnerShopId;
   }
@@ -98,7 +98,7 @@ export async function GET(request: NextRequest) {
       .input("startDate", sql.Date, startDate)
       .input("endDateExcl", sql.Date, endDateExcl)
       .input("companySeq", sql.Int, filterCompanySeq)
-      .input("partnerNameLike", sql.NVarChar, partnerNameLike)
+      .input("partnerName", sql.NVarChar, partnerNameExact)
       .input("plannerNameLike", sql.NVarChar, plannerNameLike)
       .input("productKind", sql.VarChar, productKind)
       .input("category", sql.VarChar, category);
@@ -115,7 +115,7 @@ export async function GET(request: NextRequest) {
         AND c.LOGIN_ID NOT IN ('s2_barunsoncard', 'deardeer', 's2_storyoflove')
         AND o.trouble_type = '0'
         AND (@companySeq IS NULL OR o.company_seq = @companySeq)
-        AND (@partnerNameLike IS NULL OR c.COMPANY_NAME LIKE @partnerNameLike)
+        AND (@partnerName IS NULL OR c.COMPANY_NAME = @partnerName)
         AND (@plannerNameLike IS NULL OR o.card_opt LIKE @plannerNameLike)
     `;
     const sharedFilters = `

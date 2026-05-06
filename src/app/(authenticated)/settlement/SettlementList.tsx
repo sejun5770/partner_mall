@@ -155,6 +155,24 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
   // Order-detail modal state
   const [openOrderSeq, setOpenOrderSeq] = useState<number | null>(null);
 
+  // Typeahead dropdown for the 제휴사명 input (admin only).
+  // Open when user is typing AND there are partial matches; click on a
+  // suggestion fills the input with the EXACT name (server filter uses
+  // '=', so partial-typed strings would otherwise return 0 rows).
+  const [partnerSuggestionsOpen, setPartnerSuggestionsOpen] = useState(false);
+  const partnerSuggestions = (() => {
+    if (!isAdmin) return [];
+    const q = partnerNameSearch.trim().toLowerCase();
+    if (!q) return [];
+    return partners
+      .filter(
+        (p) =>
+          p.partner_name.toLowerCase().includes(q) ||
+          p.login_id.toLowerCase().includes(q),
+      )
+      .slice(0, 10);
+  })();
+
   useEffect(() => {
     if (!isAdmin) return;
     fetch("/api/settlement/partners")
@@ -329,13 +347,56 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
                   </option>
                 ))}
               </select>
-              <input
-                type="text"
-                value={partnerNameSearch}
-                onChange={(e) => setPartnerNameSearch(e.target.value)}
-                placeholder="제휴사명 검색 (부분일치)"
-                className="h-9 w-64 rounded border border-slate-300 bg-white px-2 text-sm"
-              />
+              {/* Typeahead: input shows partial matches as a click-list
+                  beneath. Picking a row writes the EXACT 제휴사명 into the
+                  input (server applies an '=' match on submit). */}
+              <div className="relative">
+                <input
+                  type="text"
+                  value={partnerNameSearch}
+                  onChange={(e) => {
+                    setPartnerNameSearch(e.target.value);
+                    setPartnerSuggestionsOpen(true);
+                  }}
+                  onFocus={() => setPartnerSuggestionsOpen(true)}
+                  // Delay so a suggestion click registers before blur closes
+                  // the dropdown.
+                  onBlur={() =>
+                    window.setTimeout(() => setPartnerSuggestionsOpen(false), 150)
+                  }
+                  placeholder="제휴사명 입력 (선택 후 검색)"
+                  className="h-9 w-64 rounded border border-slate-300 bg-white px-2 text-sm"
+                  autoComplete="off"
+                />
+                {partnerSuggestionsOpen && partnerSuggestions.length > 0 && (
+                  <ul className="absolute left-0 top-full z-20 mt-1 max-h-64 w-72 overflow-auto rounded-md border border-slate-200 bg-white shadow-lg">
+                    {partnerSuggestions.map((p) => (
+                      <li key={p.id}>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => {
+                            // Prevent input blur firing before the click
+                            // resolves.
+                            e.preventDefault();
+                          }}
+                          onClick={() => {
+                            setPartnerNameSearch(p.partner_name);
+                            setPartnerSuggestionsOpen(false);
+                          }}
+                          className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-sm hover:bg-slate-50"
+                        >
+                          <span className="font-medium text-slate-800">
+                            {p.partner_name}
+                          </span>
+                          <span className="text-xs text-slate-400">
+                            {p.login_id}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
           )}
 
