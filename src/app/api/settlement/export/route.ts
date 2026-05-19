@@ -452,7 +452,7 @@ export async function GET(request: NextRequest) {
     //   - 기타 / 비고 placeholders carried no data the partner mall surfaces.
     // Net result: 33 → 29 columns.
     const headers = [
-      "주문번호", "부서", "제휴사ID", "제휴사", "담당자", "플래너명",
+      "주문번호", "부서", "제휴사ID", "제휴사", "제휴사코드", "담당자", "플래너명",
       "추가방법", "주문일", "결제일", "배송일", "취소일",
       "결제방법", "결제정보", "PG결제금액", "환불금액",
       "공급가액", "수수료", "정산금액", "주문자명",
@@ -515,6 +515,7 @@ export async function GET(request: NextRequest) {
         r.erp_part_code ?? "",                        // 부서
         r.login_id ?? "",                             // 제휴사ID
         r.company_name ?? "",                         // 제휴사
+        String(r.company_seq ?? ""),                  // 제휴사코드 (COMPANY_SEQ — active partners are 4-digit)
         r.mng_nm ?? "",                               // 담당자
         (r.planner_name ?? "").trim(),                // 플래너명
         addMethod,                                    // 추가방법
