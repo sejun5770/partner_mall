@@ -321,11 +321,12 @@ export default function SettlementList({ isAdmin }: { isAdmin: boolean }) {
   // Category column ("분류") is admin-only; non-admin partners are locked
   // to the 청첩장 category and the column would always say "청첩장".
   const showCategoryCol = isAdmin;
-  // 정산금액 (commission column + summary card) is hidden on the 답례품 /
-  // 기념굿즈 tabs because operations doesn't pay commission for those
-  // categories — showing the figure would mislead. Invitation and 전체
-  // tabs keep the column.
-  const showCommission = categoryTab !== "thankyou" && categoryTab !== "goods";
+  // 정산금액 column visibility. 답례품 still hidden (ops doesn't pay
+  // commission on thankyou items). 기념굿즈 now shows commission once
+  // 빠른손웹의 데코소품 수수료율 column lands in prod — until then the
+  // figure uses the invitation rate as a structural placeholder, see
+  // GOODS_RATE_EXPR TODO in /api/settlement/route.ts.
+  const showCommission = categoryTab !== "thankyou";
   // columns: NO, [아이디, 제휴사명], 주문번호, [분류], 주문상태, 주문일, 결제일, 배송일,
   //          주문자, 신랑신부, 예식장, 플래너명, 주문카드, 브랜드, 소비자가격,
   //          공급가액, 결제금액, 수수료율, [정산금액]

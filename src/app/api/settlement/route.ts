@@ -141,6 +141,43 @@ export async function GET(request: NextRequest) {
     const firstItemCategoryExpr = categoryCaseSql("fi.Card_Div", "fi.Card_Code");
     const itemCategoryExpr = categoryCaseSql("sc.Card_Div", "sc.Card_Code");
 
+    // ─── Per-category fee rate ────────────────────────────────────────
+    // 빠른손웹은 partner마다 두 가지 수수료 정책을 별도로 관리합니다:
+    //   카드 (= 청첩장)   → COMPANY.feeRate     (오랫동안 사용 중)
+    //   데코소품 (= goods) → 신규 컬럼 — dev 한정, 운영 미반영 (2026-05-20)
+    //
+    // 운영 DB column이 확정되면 GOODS_RATE_EXPR 한 줄만 교체하면 됩니다.
+    // 그때까지는 invitation rate를 그대로 사용 (구조적 placeholder).
+    //
+    // TODO(2026-05-21): swap to the new column once it lands in prod —
+    //   `COALESCE(c.<new_goods_rate_col>, 0)`
+    const INV_RATE_EXPR = "COALESCE(c.feeRate, 0)";
+    const GOODS_RATE_EXPR = "COALESCE(c.feeRate, 0) /* TODO: c.gds_feeRate */";
+
+    // Per-row rate expr. `categoryExpr` is the row's category SQL
+    // expression (literal '@category' for the category-tab branch, or
+    // ${firstItemCategoryExpr} for the 전체 branch).
+    const rateForCategory = (categoryExpr: string) => `
+      COALESCE(
+        CASE
+          WHEN ${categoryExpr} = 'goods' THEN ${GOODS_RATE_EXPR}
+          ELSE ${INV_RATE_EXPR}
+        END,
+        0
+      )
+    `;
+
+    // Same alias for the commission summary (uses table alias 'cc').
+    const ccRateForCategory = (categoryExpr: string) => `
+      COALESCE(
+        CASE
+          WHEN ${categoryExpr} = 'goods' THEN COALESCE(cc.feeRate, 0) /* TODO: cc.gds_feeRate */
+          ELSE COALESCE(cc.feeRate, 0)
+        END,
+        0
+      )
+    `;
+
     // Excluded partner LOGIN_IDs (internal accounts, not resellers).
     //
     // 사고건 제외: custom_order.trouble_type is a string code. After checking
@@ -485,10 +522,12 @@ export async function GET(request: NextRequest) {
           @category         AS category,
           fi.CardSet_Price AS item_amount,
           cs.payment_amount,
-          -- Per-company contract rate. NULL feeRate (inactive partners that
-          -- somehow surface) defaults to 0% so we never invent a payout.
-          COALESCE(c.feeRate, 0)                                    AS commission_rate,
-          FLOOR(cs.payment_amount * COALESCE(c.feeRate, 0) / 100.0) AS commission_amount,
+          -- Per-company contract rate, branched per category. Goods uses
+          -- a separate rate column (see top-of-file TODO); invitation /
+          -- 전체 use the existing feeRate. NULL → 0 so inactive partners
+          -- can't accidentally surface as a payout.
+          ${rateForCategory("@category")}                                                AS commission_rate,
+          FLOOR(cs.payment_amount * ${rateForCategory("@category")} / 100.0)             AS commission_amount,
           CASE
             WHEN o.OUTSOURCING_TYPE IS NULL
               THEN FLOOR(cs.payment_amount / 1.1)
@@ -560,8 +599,12 @@ export async function GET(request: NextRequest) {
           -- payment_amount = ltp from CTE = (shipped ? gross-refund : -refund).
           -- Negative payment is the May-blanc-style 환불 상계 row.
           oc.ltp                                                          AS payment_amount,
-          COALESCE(c.feeRate, 0)                                          AS commission_rate,
-          FLOOR(oc.ltp * COALESCE(c.feeRate, 0) / 100.0)                  AS commission_amount,
+          -- 전체 tab: rate determined by row's own first-item category.
+          -- Mixed-category orders (e.g. invitation + goods) get the
+          -- invitation rate here since ltp is the full-order amount;
+          -- the per-category tabs split it accurately.
+          ${rateForCategory(firstItemCategoryExpr)}                                       AS commission_rate,
+          FLOOR(oc.ltp * ${rateForCategory(firstItemCategoryExpr)} / 100.0)               AS commission_amount,
           CASE
             WHEN o.OUTSOURCING_TYPE IS NULL
               THEN FLOOR(oc.ltp / 1.1)
@@ -674,7 +717,10 @@ export async function GET(request: NextRequest) {
           WHEN @category = 'goods'      THEN oc.gds_items
           ELSE oc.ltp
         END
-        * COALESCE(cc.feeRate, 0) / 100.0
+        -- Rate branches per active tab. Goods tab uses the dedicated
+        -- 데코소품 rate (placeholder = cc.feeRate today; swap to the new
+        -- column once the prod schema lands — see top-of-file TODO).
+        * ${ccRateForCategory("@category")} / 100.0
       )), 0) AS total_commission
       FROM order_cats oc
       JOIN custom_order o2 ON o2.order_seq = oc.order_seq

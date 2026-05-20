@@ -106,6 +106,22 @@ export async function GET(request: NextRequest) {
     const firstItemCategoryExpr = categoryCaseSql("fi.Card_Div", "fi.Card_Code");
     const itemCategoryExpr = categoryCaseSql("sc.Card_Div", "sc.Card_Code");
 
+    // Per-category rate. Mirrors /api/settlement/route.ts — placeholder
+    // uses c.feeRate for goods until the prod 데코소품 수수료율 column
+    // lands. Swap GOODS_RATE_EXPR (one place) to enable the real rate.
+    // TODO(2026-05-21): replace placeholder with the real column.
+    const GOODS_RATE_EXPR = "COALESCE(c.feeRate, 0) /* TODO: c.gds_feeRate */";
+    const INV_RATE_EXPR = "COALESCE(c.feeRate, 0)";
+    const rateForCategory = (categoryExpr: string) => `
+      COALESCE(
+        CASE
+          WHEN ${categoryExpr} = 'goods' THEN ${GOODS_RATE_EXPR}
+          ELSE ${INV_RATE_EXPR}
+        END,
+        0
+      )
+    `;
+
     // Mirrors the list endpoint — see /api/settlement/route.ts for the
     // full rationale on each clause (cancelled / trouble / excluded
     // partner accounts) and the refund-only widening below.
@@ -362,8 +378,8 @@ export async function GET(request: NextRequest) {
           @category         AS category,
           fi.CardSet_Price  AS item_amount,
           cs.payment_amount,
-          COALESCE(c.feeRate, 0)                                    AS commission_rate,
-          FLOOR(cs.payment_amount * COALESCE(c.feeRate, 0) / 100.0) AS commission_amount,
+          ${rateForCategory("@category")}                                                AS commission_rate,
+          FLOOR(cs.payment_amount * ${rateForCategory("@category")} / 100.0)             AS commission_amount,
           CASE
             WHEN o.OUTSOURCING_TYPE IS NULL
               THEN FLOOR(cs.payment_amount / 1.1)
@@ -405,8 +421,8 @@ export async function GET(request: NextRequest) {
           fi.CardSet_Price   AS item_amount,
           -- payment_amount net of post-shipment refund
           oc.ltp             AS payment_amount,
-          COALESCE(c.feeRate, 0)                                          AS commission_rate,
-          FLOOR(oc.ltp * COALESCE(c.feeRate, 0) / 100.0)                  AS commission_amount,
+          ${rateForCategory(firstItemCategoryExpr)}                                       AS commission_rate,
+          FLOOR(oc.ltp * ${rateForCategory(firstItemCategoryExpr)} / 100.0)               AS commission_amount,
           CASE
             WHEN o.OUTSOURCING_TYPE IS NULL
               THEN FLOOR(oc.ltp / 1.1)
