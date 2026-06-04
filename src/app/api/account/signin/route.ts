@@ -14,13 +14,28 @@ export async function POST(request: NextRequest) {
 
   try {
     const pool = await getMssqlPool();
+    // LOGIN_ID 가 COMPANY 테이블에서 unique 가 아닙니다. 실측 기준 약 250개
+    // 아이디가 2~4개 행에 걸쳐 중복되어 있고, 보통 "구 계정(STATUS='S3') +
+    // 현 계정(STATUS='S2')" 조합입니다. 예전 쿼리는 LOGIN_ID 만 보고
+    // recordset[0] 을 사용했는데, MSSQL 이 ORDER BY 없이 어떤 행을 먼저
+    // 돌려줄지 보장하지 않아 다음과 같은 실패가 빈발했습니다:
+    //   - SEQ=7793 블랑드봄(bom/bom, S2) 로그인 시 SEQ=2583 오월의신부
+    //     (bom/6648, S3) 가 먼저 잡혀 "비밀번호 불일치" 또는 "비활성 계정"
+    //     으로 거절.
+    // 그래서 SELECT 단계에서 PASSWD + STATUS='S2' 까지 필터링하고,
+    // 안전망으로 가장 최신(SEQ 큰) 활성 행을 고릅니다. 아래 user.PASSWD
+    // / user.STATUS 검사는 이중방어로 그대로 유지.
     const result = await pool
       .request()
       .input("loginId", id)
+      .input("password", password)
       .query(
-        `SELECT COMPANY_SEQ, LOGIN_ID, PASSWD, COMPANY_NAME, E_MAIL, STATUS
+        `SELECT TOP 1 COMPANY_SEQ, LOGIN_ID, PASSWD, COMPANY_NAME, E_MAIL, STATUS
          FROM COMPANY
-         WHERE LOGIN_ID = @loginId`
+         WHERE LOGIN_ID = @loginId
+           AND PASSWD   = @password
+           AND STATUS   = 'S2'
+         ORDER BY COMPANY_SEQ DESC`
       );
 
     const user = result.recordset[0];
@@ -32,9 +47,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Only active accounts may sign in. STATUS distribution in the live DB:
-    //   S2 = 활성 (login allowed)
-    //   S1 = 대기, S3 = 비활성, '' / NULL = 정의되지 않음 (login refused)
+    // STATUS='S2' 만 SELECT 했으므로 여기서는 항상 통과하지만, SELECT
+    // 조건이 미래에 바뀔 경우를 대비해 명시적 가드 유지.
+    // (S1=대기, S3=비활성, '' / NULL = 정의되지 않음 → 모두 거절)
     if (user.STATUS !== "S2") {
       return NextResponse.json(
         { message: "비활성 계정입니다. 관리자에게 문의해주세요." },
