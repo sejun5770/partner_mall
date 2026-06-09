@@ -466,12 +466,17 @@ export async function GET(request: NextRequest) {
     //   - 최종금액 = 결제금액 − 식권 was operationally noisy and not used
     //     downstream.
     //   - 기타 / 비고 placeholders carried no data the partner mall surfaces.
-    // Net result: 33 → 29 columns.
+    // Round-3 (요청): O~S 열 재정렬 — 공급가액 컬럼 삭제, 그 자리에
+    //   정산금액(= PG결제금액 − 환불금액) + 수수료율(%) + 수수료금액 으로
+    //   다시 배치. 이전 레이아웃은 라벨과 값이 어긋나 있어
+    //   ("수수료" 칸에 실제로는 ratePct, "정산금액" 칸에 실제로는 commission)
+    //   회계팀에서 헷갈려 하던 부분도 같이 해소.
+    // Net result: 30 columns.
     const headers = [
       "주문번호", "부서", "제휴사ID", "제휴사", "제휴사코드", "담당자", "플래너명",
       "추가방법", "주문일", "결제일", "배송일", "취소일",
       "결제방법", "결제정보", "PG결제금액", "환불금액",
-      "공급가액", "수수료", "정산금액", "주문자명",
+      "정산금액", "수수료율", "수수료", "주문자명",
       "신랑/신부명", "상품명", "브랜드", "소비자단가", "수량",
       "예식일자", "예식장", "예식구분", "구분", "핸드폰",
     ];
@@ -541,11 +546,11 @@ export async function GET(request: NextRequest) {
         r.cancel_date_str ?? "",                      // 취소일
         결제방법,                                     // 결제방법
         결제정보,                                     // 결제정보
-        String(grossTotal),                           // PG결제금액
+        String(grossTotal),                           // PG결제금액 (= grossTotal)
         String(refund),                               // 환불금액 (출고후 환불)
-        String(Number(r.supply_amount ?? 0)),         // 공급가액 = (결제 - 환불) / 1.1
-        `${ratePct}%`,                                // 수수료
-        String(commission),                           // 정산금액 = (결제 - 환불) × 수수료율
+        String(netTotal),                             // 정산금액 = PG결제금액 − 환불금액 (oc.ltp)
+        `${ratePct}%`,                                // 수수료율 (예: "10%")
+        String(commission),                           // 수수료 = FLOOR(정산금액 × 수수료율 / 100)
         r.order_name ?? "",                           // 주문자명
         couple,                                       // 신랑/신부명
         r.card_code ?? "",                            // 상품명
