@@ -572,13 +572,68 @@ export async function GET(request: NextRequest) {
     });
 
     // ─── Workbook ────────────────────────────────────────────────────
-    // Sheet name fixed to "매출현황(관리자)" per ops request — the
-    // accounting workbook references this sheet by name in formulas, so
-    // do NOT change it without coordinating with finance.
+    // Sheet 1 "매출현황(관리자)" — full 30-column admin layout, headers
+    // above. The accounting workbook references this sheet by name in
+    // formulas, so do NOT change the name without coordinating with finance.
+    //
+    // Sheet 2 "매출리포트" — same source rows reshaped to the 18-column
+    // 거래내역 view (브랜드/주문 정보 leading, 제휴사/수수료 trailing).
+    // Indices below point into the sheet-1 row array, so any change to the
+    // sheet-1 column order must update REPORT_INDEX too.
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet("매출현황(관리자)");
     sheet.addRow(headers);
     for (const row of rows) sheet.addRow(row);
+
+    const REPORT_INDEX = {
+      brand: 22,         // 브랜드
+      orderNo: 0,        // 주문번호
+      weddDate: 25,      // 예식일자
+      sendDate: 10,      // 배송일
+      orderName: 19,     // 주문자명
+      couple: 20,        // 신랑/신부명
+      productName: 21,   // 상품명
+      quantity: 24,      // 수량
+      pgAmount: 14,      // PG결제금액
+      refund: 15,        // 환불금액
+      netSettlement: 16, // 정산금액 (= PG − 환불)
+      plannerName: 6,    // 플래너명
+      manager: 5,        // 담당자
+      dept: 1,           // 부서
+      partnerId: 2,      // 제휴사ID
+      partnerName: 3,    // 제휴사
+      commission: 18,    // 수수료 (금액)
+      weddPlace: 26,     // 예식장
+    };
+    const reportHeaders = [
+      "브랜드", "주문번호", "예식일자", "배송일", "주문자명", "신랑/신부명",
+      "상품명", "수량", "PG결제금액", "환불금액", "정산금액", "플래너명",
+      "담당자", "부서", "제휴사ID", "제휴사", "수수료", "예식장",
+    ];
+    const reportSheet = workbook.addWorksheet("매출리포트");
+    reportSheet.addRow(reportHeaders);
+    for (const row of rows) {
+      reportSheet.addRow([
+        row[REPORT_INDEX.brand],
+        row[REPORT_INDEX.orderNo],
+        row[REPORT_INDEX.weddDate],
+        row[REPORT_INDEX.sendDate],
+        row[REPORT_INDEX.orderName],
+        row[REPORT_INDEX.couple],
+        row[REPORT_INDEX.productName],
+        row[REPORT_INDEX.quantity],
+        row[REPORT_INDEX.pgAmount],
+        row[REPORT_INDEX.refund],
+        row[REPORT_INDEX.netSettlement],
+        row[REPORT_INDEX.plannerName],
+        row[REPORT_INDEX.manager],
+        row[REPORT_INDEX.dept],
+        row[REPORT_INDEX.partnerId],
+        row[REPORT_INDEX.partnerName],
+        row[REPORT_INDEX.commission],
+        row[REPORT_INDEX.weddPlace],
+      ]);
+    }
 
     const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
 
