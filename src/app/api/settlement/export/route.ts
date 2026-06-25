@@ -572,16 +572,19 @@ export async function GET(request: NextRequest) {
     });
 
     // ─── Workbook ────────────────────────────────────────────────────
-    // Sheet 1 "매출현황(관리자)" — full 30-column admin layout, headers
-    // above. The accounting workbook references this sheet by name in
-    // formulas, so do NOT change the name without coordinating with finance.
+    // Sheet 1 "매출리포트" — full 30-column layout (headers above),
+    // matches the workbook filename and is what opens by default.
     //
-    // Sheet 2 "매출리포트" — same source rows reshaped to the 18-column
-    // 거래내역 view (브랜드/주문 정보 leading, 제휴사/수수료 trailing).
-    // Indices below point into the sheet-1 row array, so any change to the
-    // sheet-1 column order must update REPORT_INDEX too.
+    // Sheet 2 "매출현황(관리자)" — same source rows reshaped to the
+    // 18-column 거래내역 view (브랜드/주문 정보 leading, 제휴사/수수료
+    // trailing). The accounting workbook references this sheet by name
+    // in formulas, so do NOT change its name without coordinating with
+    // finance.
+    //
+    // REPORT_INDEX below points into the sheet-1 row array, so any
+    // change to the sheet-1 column order must update REPORT_INDEX too.
     const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet("매출현황(관리자)");
+    const sheet = workbook.addWorksheet("매출리포트");
     sheet.addRow(headers);
     for (const row of rows) sheet.addRow(row);
 
@@ -610,7 +613,7 @@ export async function GET(request: NextRequest) {
       "상품명", "수량", "PG결제금액", "환불금액", "정산금액", "플래너명",
       "담당자", "부서", "제휴사ID", "제휴사", "수수료", "예식장",
     ];
-    const reportSheet = workbook.addWorksheet("매출리포트");
+    const reportSheet = workbook.addWorksheet("매출현황(관리자)");
     reportSheet.addRow(reportHeaders);
     for (const row of rows) {
       reportSheet.addRow([
