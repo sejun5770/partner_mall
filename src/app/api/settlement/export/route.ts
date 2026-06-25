@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
+import ExcelJS from "exceljs";
 import { getMssqlPool } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { brandName } from "@/lib/brand";
@@ -9,10 +10,11 @@ import { classifyPayment } from "@/lib/payment";
 /**
  * GET /api/settlement/export
  *
- * CSV download. Column layout matches the operations team's existing
- * 32-column reporting template, so admins can drop the export straight
- * into their accounting workbook without re-mapping. Encoded UTF-8 + BOM
- * for Excel.
+ * XLSX download. Column layout matches the operations team's existing
+ * reporting template. Sheet name fixed to "매출현황(관리자)" per ops
+ * request so the file slots straight into their accounting workbook.
+ * (Previously CSV+BOM — switched to real .xlsx so the sheet name and
+ * future column-formatting can be set on the server side.)
  *
  * Filter semantics mirror /api/settlement (date basis, partner filter,
  * category, cancel exclude, trouble_type='0', etc.) so what's on screen
@@ -569,25 +571,26 @@ export async function GET(request: NextRequest) {
       ];
     });
 
-    const escapeCsv = (v: string) => {
-      if (v == null) return "";
-      const needsQuote = /[",\n\r]/.test(v);
-      const s = v.replace(/"/g, '""');
-      return needsQuote ? `"${s}"` : s;
-    };
+    // ─── Workbook ────────────────────────────────────────────────────
+    // Sheet name fixed to "매출현황(관리자)" per ops request — the
+    // accounting workbook references this sheet by name in formulas, so
+    // do NOT change it without coordinating with finance.
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("매출현황(관리자)");
+    sheet.addRow(headers);
+    for (const row of rows) sheet.addRow(row);
 
-    const csvBody = [
-      headers.map(escapeCsv).join(","),
-      ...rows.map((row) => row.map(escapeCsv).join(",")),
-    ].join("\r\n");
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
 
-    const filename = `settlement_${startDate}_${endDateExcl}${category ? `_${category}` : ""}.csv`;
+    const filename = `settlement_${startDate}_${endDateExcl}${category ? `_${category}` : ""}.xlsx`;
 
-    return new NextResponse("﻿" + csvBody, {
+    return new NextResponse(new Uint8Array(buffer), {
       status: 200,
       headers: {
-        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Type":
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "Content-Disposition": `attachment; filename="${filename}"`,
+        "Content-Length": String(buffer.length),
       },
     });
   } catch (error) {
