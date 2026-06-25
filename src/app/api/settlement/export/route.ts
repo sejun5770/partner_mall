@@ -582,14 +582,28 @@ export async function GET(request: NextRequest) {
 
     const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
 
-    const filename = `settlement_${startDate}_${endDateExcl}${category ? `_${category}` : ""}.xlsx`;
+    // Filename format per ops request: 매출리포트(05.01~05.31).xlsx
+    //   - startDate / endDateExcl are YYYY-MM-DD strings, endDateExcl is
+    //     exclusive (e.g. 2026-06-01 for a 5월 query) so we subtract one
+    //     day to get the inclusive end shown in the filename.
+    //   - Korean chars are encoded via RFC 5987 (filename*=UTF-8''...)
+    //     with an ASCII fallback for older clients.
+    const fmtMD = (d: Date) =>
+      `${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
+    const startMD = fmtMD(new Date(`${startDate}T00:00:00`));
+    const endInclusive = new Date(`${endDateExcl}T00:00:00`);
+    endInclusive.setDate(endInclusive.getDate() - 1);
+    const endMD = fmtMD(endInclusive);
+    const filename = `매출리포트(${startMD}~${endMD}).xlsx`;
+    const filenameAscii = `sales_report_${startMD}_${endMD}.xlsx`;
+    const filenameStarEncoded = encodeURIComponent(filename);
 
     return new NextResponse(new Uint8Array(buffer), {
       status: 200,
       headers: {
         "Content-Type":
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Content-Disposition": `attachment; filename="${filenameAscii}"; filename*=UTF-8''${filenameStarEncoded}`,
         "Content-Length": String(buffer.length),
       },
     });
